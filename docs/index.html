@@ -102,6 +102,8 @@ canvas { display: block; width: 100%; }
 .summary ul { margin: 0 0 8px; padding-left: 20px; line-height: 1.5; }
 .summary .meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
 .summary .meta.warn { color: var(--severe); }
+.dt { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.dt input, .dt select { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 4px 4px; font-variant-numeric: tabular-nums; }
 .cw-in { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 10px; }
 .cw-in label { color: var(--muted); }
 .cw-in input { margin-left: 6px; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 4px 6px; }
@@ -188,9 +190,14 @@ table.cmp tr { cursor: pointer; }
 <div class="actions">
   <span class="hint">Site</span>
   <div class="seg pad" id="siteSeg" role="group" aria-label="Site"></div>
+  <span class="hint">Time</span>
+  <div class="seg pad" id="tzSeg" role="group" aria-label="Time zone">
+    <button type="button" data-tz="local" aria-pressed="true">Local</button>
+    <button type="button" data-tz="zulu" aria-pressed="false">Zulu</button>
+  </div>
   <span class="cw-in" style="margin:0">
-    <label>Window start <input type="datetime-local" id="cwStart" step="900"></label>
-    <label>end <input type="datetime-local" id="cwEnd" step="900"></label>
+    <span class="dt"><span class="hint">Window start</span> <input type="date" id="cwStartD"> <select id="cwStartH" aria-label="Start hour"></select>:<select id="cwStartM" aria-label="Start minute"></select></span>
+    <span class="dt"><span class="hint">end</span> <input type="date" id="cwEndD"> <select id="cwEndH" aria-label="End hour"></select>:<select id="cwEndM" aria-label="End minute"></select></span>
     <span class="hint" id="cwTz"></span>
     <button class="linkbtn" type="button" id="cwClear">Clear</button>
   </span>
@@ -213,7 +220,7 @@ table.cmp tr { cursor: pointer; }
       <span><i style="background:var(--slight)"></i>GO, or weather chance under 20%</span>
       <span><i style="background:var(--marginal)"></i>Weather chance 20–50%</span>
       <span><i style="background:var(--severe)"></i>NO-GO, or weather chance over 50%</span>
-      <span>Wind cells show the highest hourly ensemble mean / 99th percentile in the window (kt). Select a cell to set it as your window.</span>
+      <span>Wind cells show the highest hourly ensemble mean / 99th percentile in the window (kt). Blocks follow the time zone chosen above. Select a cell to set it as your window.</span>
     </div>
   </section>
 
@@ -266,7 +273,9 @@ const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).
 const alpha = (hex, a) => { const n = parseInt(hex.replace("#", ""), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; };
 
 // ---------- time
-let TZ = "America/Los_Angeles";
+let TZ = "America/Los_Angeles", LOCAL_TZ = TZ, ZULU = false;
+const tzName = p => ZULU ? "Z" : p.timeZoneName;
+const tzSuffix = () => ZULU ? "Z" : "L";
 function parts(ms) {
   const f = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short", timeZoneName: "short" });
   return Object.fromEntries(f.formatToParts(new Date(ms)).map(p => [p.type, p.value]));
@@ -275,7 +284,7 @@ function zonedToUtc(y, mo, d, h, mi = 0) { const want = Date.UTC(y, mo - 1, d, h
 const toLocalInput = ms => { const p = parts(ms); return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`; };
 const fromLocalInput = s => { const [d, t] = s.split("T"); const [y, mo, dd] = d.split("-").map(Number); const [h, mi] = t.split(":").map(Number); return zonedToUtc(y, mo, dd, h, mi) / 1000; };
 const zHour = ms => String(new Date(ms).getUTCHours()).padStart(2, "0") + "Z";
-const local = ms => { const p = parts(ms); return `${p.weekday} ${p.hour}:${p.minute} ${p.timeZoneName}`; };
+const local = ms => { const p = parts(ms); return ZULU ? `${p.weekday} ${p.hour}${p.minute}Z` : `${p.weekday} ${p.hour}:${p.minute} ${p.timeZoneName}`; };
 
 // ---------- wind statistics (ensemble mean and 99th percentile each hour)
 function wq(pairs, q) {
@@ -402,7 +411,7 @@ function grid() {
     const c = cols[i], wd = new Date(Date.UTC(c.y, c.mo - 1, c.dd)).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
     h += `<th colspan="${per}" class="day${cols[i + per - 1].b <= now ? " past" : ""}">${wd}<small>${c.mo}/${c.dd}</small></th>`;
   }
-  h += "</tr><tr><th></th>" + cols.map(c => `<th class="hr${c.b <= now ? " past" : ""}">${String(c.h).padStart(2, "0")}L</th>`).join("") + "</tr></thead><tbody>";
+  h += "</tr><tr><th></th>" + cols.map(c => `<th class="hr${c.b <= now ? " past" : ""}">${String(c.h).padStart(2, "0")}${tzSuffix()}</th>`).join("") + "</tr></thead><tbody>";
   const pc = c => c.b <= now ? " past" : "";
   h += `<tr class="overall"><td class="rowh">Wind<small>mean / p99, kt</small></td>` + cols.map((c, i) =>
     `<td class="p ${c.ev.cat == null ? "na" : CATC[c.ev.cat]}${pc(c)}" data-i="${i}" title="${c.ev.cat == null ? "" : CAT[c.ev.cat]}">${c.ev.mean == null ? "–" : `${c.ev.mean.toFixed(1)}<br><small>${c.ev.p99.toFixed(1)}</small>`}</td>`).join("") + "</tr>";
@@ -512,19 +521,19 @@ function siteSeg() {
   $("#siteSeg").querySelectorAll("button").forEach(b => b.addEventListener("click", () => setSite(b.dataset.s)));
 }
 function setCustom(a, b, save = true) {
-  state.cw = { a, b }; $("#cwStart").value = a != null ? toLocalInput(a * 1000) : ""; $("#cwEnd").value = b != null ? toLocalInput(b * 1000) : "";
+  state.cw = { a, b }; setPicker("cwStart", a); setPicker("cwEnd", b);
   if (save) { const u = new URL(location.href), z = x => new Date(x * 1000).toISOString().slice(0, 16) + "Z";
     u.hash = a != null && b != null ? `start=${z(a)}&end=${z(b)}` : ""; history.replaceState(null, "", u); store.set("sd.cw", a != null && b != null ? JSON.stringify(state.cw) : null); }
 }
 function header() {
   const d = state.data, s = d.sites.find(x => x.id === state.site);
-  $("#where").textContent = `${s.label} at ${s.lat.toFixed(3)}°N, ${Math.abs(s.lon).toFixed(3)}°W, times in ${parts(Date.now()).timeZoneName}`;
+  $("#where").textContent = `${s.label} at ${s.lat.toFixed(3)}°N, ${Math.abs(s.lon).toFixed(3)}°W, times in ${ZULU ? "Zulu (UTC)" : parts(Date.now()).timeZoneName}, 24-hour`;
   const age = Math.max(0, Math.round((Date.now() / 1000 - d.generated_unix) / 60)), stale = age > STALE_MIN, ageTxt = age < 90 ? `${age} min ago` : `${(age / 60).toFixed(1)} h ago`;
   $("#fresh").className = "fresh" + (stale ? " stale" : ""); $("#fresh").innerHTML = `Updated <b>${d.generated.slice(11, 16)}Z ${d.generated.slice(0, 10)}</b><br><span class="where">${ageTxt}</span>`;
   let b = ""; if (d.demo) b += `<div class="banner">Demo data. The first scheduled run replaces this with live guidance.</div>`;
   if (stale && !d.demo) b += `<div class="banner bad">Data is ${ageTxt.replace(" ago", "")} old. The hourly update may have failed; check the repository's Actions tab.</div>`;
   const bad = d.sources.filter(s => ["error", "missing"].includes(s.status)); if (bad.length) b += `<div class="banner">No data this run from ${bad.map(s => s.label).join(", ")}.</div>`;
-  $("#banners").innerHTML = b; $("#cwTz").textContent = parts(Date.now()).timeZoneName;
+  $("#banners").innerHTML = b; $("#cwTz").textContent = ZULU ? "Z" : parts(Date.now()).timeZoneName;
 }
 function refreshViews() { state.hourly[state.site] = state.hourly[state.site] || hourlyWind(state.site); state.cols = columns(); status(); grid(); drawWind(); drawRibbon(); drawWx(); overlays(); readout(); }
 function recompute() { state.hourly = {}; sourceList(); refreshViews(); }
@@ -532,7 +541,7 @@ async function load(first) {
   let d; try { const r = await fetch(DATA_URL + "?t=" + Date.now(), { cache: "no-store" }); if (!r.ok) throw new Error("HTTP " + r.status); d = await r.json(); }
   catch (e) { if (first) $("#banners").innerHTML = `<div class="banner bad">Could not load ${DATA_URL} (${e.message}). The first pipeline run creates it.</div>`; return; }
   if (!first && state.data && d.generated_unix === state.data.generated_unix) { header(); return; }
-  state.data = d; TZ = d.display_tz || TZ; state.tindex = new Map(d.times.map((t, i) => [t, i]));
+  state.data = d; LOCAL_TZ = d.display_tz || LOCAL_TZ; TZ = ZULU ? "UTC" : LOCAL_TZ; state.tindex = new Map(d.times.map((t, i) => [t, i]));
   let off; try { off = new Set(JSON.parse(store.get("sd.off") || "[]")); } catch { off = new Set(); }
   for (const s of d.sources) if (!(s.id in state.enabled)) state.enabled[s.id] = s.members.length > 0 && !off.has(s.id);
   if (first) {
@@ -544,8 +553,35 @@ async function load(first) {
   }
   header(); siteSeg(); recompute();
 }
-const cwChange = () => { const a = $("#cwStart").value, b = $("#cwEnd").value; setCustom(a ? fromLocalInput(a) : null, b ? fromLocalInput(b) : null); if (state.data) refreshViews(); };
-$("#cwStart").addEventListener("change", cwChange); $("#cwEnd").addEventListener("change", cwChange);
+// 24-hour pickers: a date box plus hour (00-23) and minute selects, in the chosen time zone
+function fillPickers() {
+  for (const id of ["cwStart", "cwEnd"]) {
+    $(`#${id}H`).innerHTML = Array.from({ length: 24 }, (_, h) => `<option>${String(h).padStart(2, "0")}</option>`).join("");
+    $(`#${id}M`).innerHTML = ["00", "15", "30", "45"].map(m => `<option>${m}</option>`).join("");
+  }
+}
+function setPicker(id, sec) {
+  if (sec == null) { $(`#${id}D`).value = ""; $(`#${id}H`).value = "00"; $(`#${id}M`).value = "00"; return; }
+  const p = parts(sec * 1000), mm = String(Math.floor(+p.minute / 15) * 15).padStart(2, "0");
+  $(`#${id}D`).value = `${p.year}-${p.month}-${p.day}`; $(`#${id}H`).value = p.hour; $(`#${id}M`).value = mm;
+}
+function readPicker(id) {
+  const d = $(`#${id}D`).value; if (!d) return null;
+  return fromLocalInput(`${d}T${$(`#${id}H`).value}:${$(`#${id}M`).value}`);
+}
+const cwChange = () => { setCustom(readPicker("cwStart"), readPicker("cwEnd")); if (state.data) refreshViews(); };
+fillPickers();
+for (const id of ["cwStartD", "cwStartH", "cwStartM", "cwEndD", "cwEndH", "cwEndM"]) $("#" + id).addEventListener("change", cwChange);
+// time zone toggle: switches every label, the 3-hour blocks and the pickers
+function setZone(z, save = true) {
+  ZULU = z === "zulu"; TZ = ZULU ? "UTC" : LOCAL_TZ;
+  document.querySelectorAll("#tzSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.tz === z));
+  if (save) store.set("sd.tz", z);
+  setCustom(state.cw.a, state.cw.b, false);
+  if (state.data) { header(); refreshViews(); }
+}
+document.querySelectorAll("#tzSeg button").forEach(b => b.addEventListener("click", () => setZone(b.dataset.tz)));
+setZone(store.get("sd.tz") === "zulu" ? "zulu" : "local", false);
 $("#cwClear").addEventListener("click", () => { setCustom(null, null); if (state.data) refreshViews(); });
 let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => state.data && refreshViews(), 150); });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.data && refreshViews());
