@@ -233,3 +233,73 @@ def nbm_prob(scfg, ctx):
     note = "thunder and 1 h precip within the radius" + (f"; {', '.join(sorted(thr_note))} at the site" if thr_note else "")
     return SourceResult({"m00": series} if series else {}, cycle=iso(cycle), note=note,
                         status="ok" if series else "missing")
+
+
+# ---------------------------------------------------------------- NBM wind percentiles (QMD)
+_PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%\s*level|percentile\D{0,12}(\d+)", re.I)
+
+
+def nbm_qmd(scfg, ctx):
+    """NBM quantile-mapped 10 m wind at each site: the distribution mean ("wm") and its
+    99th percentile ("w99"), in kt. Used by the page when NBM is the only wind source,
+    so the 99th percentile comes from NBM's own distribution instead of pooled members."""
+    cands = [x for x in (floor_hour(ctx.now) - k * 3600 for k in range(36))
+             if time.gmtime(x).tm_hour in set(scfg.get("cycles", [0, 6, 12, 18]))]
+    picked = _pick([scfg["base"]], scfg["file"], cands)
+    if not picked:
+        return SourceResult({}, status="missing", note="no recent QMD cycle found")
+    base, cycle = picked
+    target = float(scfg.get("percentile", 99))
+    used = set()
+
+    def select(inv):
+        mean, pcts = None, []
+        for rec in inv:
+            d = rec[3]
+            if ":WIND:10 m above ground:" not in d:
+                continue
+            m = _PCT.search(d)
+            if m:
+                pcts.append((float(m.group(1) or m.group(2)), rec))
+            elif not re.search(r"std|prob|max|min|ave", d, re.I) and mean is None:
+                mean = rec
+        out = [("wm", mean, "point")] if mean else []
+        if pcts:
+            p, rec = min(pcts, key=lambda x: abs(x[0] - target))
+            used.add(p)
+            out.append(("w99", rec, "point"))
+        return out
+
+    def run(fh):
+        url = f"{base}/{_fmt(scfg['file'], cycle, fh)}"
+        got = ctx.cache.get(url + "#qmd")
+        if got is None:
+            try:
+                vals = fetch_select(url, select, ctx.sites, float(ctx.cons["radius_nm"]))
+            except Missing:
+                return None
+            except Exception as e:
+                log.warning("%s f%03d: %s", scfg["id"], fh, e)
+                return None
+            got = {k: d for k, d in vals.items() if isinstance(d, dict)}
+            ctx.cache.put(url + "#qmd", cycle, got)
+        return fh, got
+
+    fhs = [fh for fh in range(1, int(scfg.get("max_fh", 192)) + 1) if ctx.in_window(cycle + fh * 3600)]
+    series = {}
+    with ThreadPoolExecutor(16) as ex:
+        for res in ex.map(run, fhs):
+            if not res:
+                continue
+            fh, got = res
+            rec = {}
+            for name, bysite in got.items():
+                for sid, v in bysite.items():
+                    if v is not None:
+                        rec[f"{name}@{sid}"] = round(v * MS_TO_KT, 2)
+            if rec:
+                series[cycle + fh * 3600] = rec
+    pct = ", ".join(f"{p:g}th" for p in sorted(used)) or "none found"
+    return SourceResult({"m00": series} if series else {}, cycle=iso(cycle),
+                        note=f"QMD mean and {pct} percentile 10 m wind",
+                        status="ok" if series else "missing")
