@@ -1,0 +1,81 @@
+# Splashdown weather board: Southern California offshore sites.
+
+display_tz: America/Los_Angeles
+days: 7
+window_hours: 3
+hours_back: 12
+
+sites:
+  - {id: OCN,  label: OCN,  lat: 33.012, lon: -117.748}
+  - {id: LOS,  label: LOS,  lat: 33.679, lon: -119.153}
+  - {id: SAND, label: SAND, lat: 32.603, lon: -117.704}
+
+constraints:
+  # Wind: judged on the ensemble each hour (all enabled members, each source's weight split
+  # across its members). Mean = weighted mean 10 m wind; p99 = weighted 99th percentile.
+  super_go: {mean_kt: 7.25, p99_kt: 10.0}
+  go:       {mean_kt: 7.75, p99_kt: 11.5}
+  # Weather: chance a member meets the condition at some hour in the window.
+  radius_nm: 10                # precip and lightning: anywhere within this distance of the site
+  precip_dbz: 20               # hi-res: 1 km reflectivity (composite if absent) >= this
+  precip_in: 0.01              # global ensembles: 1 h precip >= this at the site or 10 nm ring
+  ltng_threshold: 0.05         # hi-res lightning field (flashes/km2/5 min) above this
+  ceiling_ft: 500              # ceiling below this at the site
+  vis_sm: 1                    # visibility below this at the site
+
+min_window_coverage: 0.5
+openmeteo_refresh_hours: 3
+
+sources:
+  - id: hrrr
+    kind: tle
+    label: HRRR time-lagged
+    family: hires
+    weight: 3
+    base: https://noaa-hrrr-bdp-pds.s3.amazonaws.com
+    file: "hrrr.{ymd}/conus/hrrr.t{hh}z.wrfsfcf{fh:02d}.grib2"
+    lag_cycles: 6
+    synoptic_extra: 2
+    short_fh: 18
+    long_fh: 48
+
+  - id: href
+    kind: multi_model
+    label: HREF members
+    family: hires
+    weight: 3
+    components:
+      - {id: ARW,  base: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/hiresw/prod", file: "hiresw.{ymd}/hiresw.t{hh}z.arw_2p5km.f{fh:02d}.conus.grib2",     cycles: [0, 12], lag: 2, max_fh: 48}
+      - {id: ARW2, base: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/hiresw/prod", file: "hiresw.{ymd}/hiresw.t{hh}z.arw_2p5km.f{fh:02d}.conusmem2.grib2", cycles: [0, 12], lag: 2, max_fh: 48}
+      - {id: FV3,  base: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/hiresw/prod", file: "hiresw.{ymd}/hiresw.t{hh}z.fv3_2p5km.f{fh:02d}.conus.grib2",     cycles: [0, 12], lag: 2, max_fh: 48}
+      - {id: NAM3k, base: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/nam/prod",   file: "nam.{ymd}/nam.t{hh}z.conusnest.hiresf{fh:02d}.tm00.grib2",       cycles: [0, 6, 12, 18], lag: 2, max_fh: 60}
+      - {id: HRRR, base: "https://noaa-hrrr-bdp-pds.s3.amazonaws.com",                  file: "hrrr.{ymd}/conus/hrrr.t{hh}z.wrfsfcf{fh:02d}.grib2",             cycles: [0, 6, 12, 18], lag: 2, max_fh: 48}
+
+  - id: nam3k
+    kind: multi_model
+    label: NAM 3 km
+    family: hires
+    weight: 2
+    components:
+      - {id: NAM3k, base: "https://nomads.ncep.noaa.gov/pub/data/nccf/com/nam/prod", file: "nam.{ymd}/nam.t{hh}z.conusnest.hiresf{fh:02d}.tm00.grib2", cycles: [0, 6, 12, 18], lag: 4, max_fh: 60}
+
+  # NBM probabilities: thunder (1/3/6 h) and 1 h precip within the radius; ceiling and
+  # visibility at the site, using the NBM thresholds closest to the limits.
+  - id: nbm_prob
+    kind: nbm_prob
+    label: NBM probabilities
+    family: blend
+    weight: 2
+    base: https://noaa-nbm-grib2-pds.s3.amazonaws.com
+    file: "blend.{ymd}/{hh}/core/blend.t{hh}z.core.f{fh:03d}.co.grib2"
+    cycles: [0, 6, 12, 18]
+    max_fh: 192
+    max_period_h: 6
+
+  # NBM deterministic wind (feeds the wind statistics as one member).
+  - {id: nbm,       kind: openmeteo_det, label: NBM wind,        family: blend,  weight: 2, model: ncep_nbm_conus, only: [w]}
+  - {id: ecmwf_ens, kind: openmeteo_ens, label: ECMWF ENS,       family: global, weight: 2, model: ecmwf_ifs025}
+  - {id: aifs_ens,  kind: openmeteo_ens, label: ECMWF AIFS ENS,  family: global, weight: 1, model: ecmwf_aifs025}
+  - {id: gefs,      kind: openmeteo_ens, label: GEFS,            family: global, weight: 1, model: gfs025}
+  - {id: icon_eps,  kind: openmeteo_ens, label: ICON EPS,        family: global, weight: 1, model: icon_seamless}
+  - {id: gem_eps,   kind: openmeteo_ens, label: GEM EPS,         family: global, weight: 1, model: gem_global}
