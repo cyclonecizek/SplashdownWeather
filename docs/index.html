@@ -220,7 +220,7 @@ table.cmp tr { cursor: pointer; }
       <span><i style="background:var(--slight)"></i>GO, or weather chance under 20%</span>
       <span><i style="background:var(--marginal)"></i>Weather chance 20–50%</span>
       <span><i style="background:var(--severe)"></i>NO-GO, or weather chance over 50%</span>
-      <span>Wind cells show the highest hourly ensemble mean / 99th percentile in the window (kt). Blocks follow the time zone chosen above. Select a cell to set it as your window.</span>
+      <span>Wind rows show the highest hourly ensemble mean and 99th percentile in the window (kt), each colored against its own limits; the window's wind status is the worse of the two. Blocks follow the time zone chosen above. Select a cell to set it as your window.</span>
     </div>
   </section>
 
@@ -413,8 +413,15 @@ function grid() {
   }
   h += "</tr><tr><th></th>" + cols.map(c => `<th class="hr${c.b <= now ? " past" : ""}">${String(c.h).padStart(2, "0")}${tzSuffix()}</th>`).join("") + "</tr></thead><tbody>";
   const pc = c => c.b <= now ? " past" : "";
-  h += `<tr class="overall"><td class="rowh">Wind<small>mean / p99, kt</small></td>` + cols.map((c, i) =>
-    `<td class="p ${c.ev.cat == null ? "na" : CATC[c.ev.cat]}${pc(c)}" data-i="${i}" title="${c.ev.cat == null ? "" : CAT[c.ev.cat]}">${c.ev.mean == null ? "–" : `${c.ev.mean.toFixed(1)}<br><small>${c.ev.p99.toFixed(1)}</small>`}</td>`).join("") + "</tr>";
+  // Two wind rows, each colored against its own limits (Super GO / GO / NO-GO).
+  const C = state.data.constraints;
+  const lvl = (v, sg, go) => v == null ? null : v <= sg ? 0 : v <= go ? 1 : 2;
+  const windRow = (name, sub, get, sg, go, cls) => `<tr class="${cls}"><td class="rowh">${name}<small>${sub}</small></td>` + cols.map((c, i) => {
+    const v = get(c.ev), l = lvl(v, sg, go);
+    return `<td class="p ${l == null ? "na" : CATC[l]}${pc(c)}" data-i="${i}" title="${l == null ? "" : CAT[l]}">${v == null ? "–" : v.toFixed(1)}</td>`;
+  }).join("") + "</tr>";
+  h += windRow("Mean wind", `kt, GO ≤ ${C.go.mean_kt}`, e => e.mean, C.super_go.mean_kt, C.go.mean_kt, "overall");
+  h += windRow("99th percentile", `kt, GO ≤ ${C.go.p99_kt}`, e => e.p99, C.super_go.p99_kt, C.go.p99_kt, "");
   for (const X of WX) h += `<tr><td class="rowh">${X.name}<small>${X.sub}</small></td>` + cols.map((c, i) => { const v = c.ev.wx[X.k]; return `<td class="p ${wcls(v)}${pc(c)}" data-i="${i}">${v == null ? "–" : v + "%"}</td>`; }).join("") + "</tr>";
   h += `<tr><td class="rowh">Any weather<small>checked conditions</small></td>` + cols.map((c, i) => `<td class="p ${wcls(c.ev.any)}${pc(c)}" data-i="${i}">${c.ev.any == null ? "–" : c.ev.any + "%"}</td>`).join("") + "</tr>";
   $("#grid").innerHTML = h + "</tbody>";
