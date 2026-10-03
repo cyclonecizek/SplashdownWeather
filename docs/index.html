@@ -139,8 +139,8 @@ table.g th.hr { font-weight: 500; color: var(--muted); font-size: 12px; min-widt
 table.g th.day.past, table.g th.hr.past { opacity: .45; }
 .seg.pad { margin: 0; }
 
-:root { --sgo: #1c7fa6; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --sgo: #3aa7d1; } }
+:root { --sgo: #1c7fa6; --mos: #a8642a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --sgo: #3aa7d1; --mos: #d08a4a; } }
 :root[data-theme="dark"] { --sgo: #3aa7d1; }
 td.sg { background: color-mix(in srgb, var(--sgo) 80%, var(--panel)); color: #fff; }
 .tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(5, minmax(110px, 1fr)); gap: 10px; }
@@ -214,6 +214,7 @@ table.cmp tr { cursor: pointer; }
 
   <section class="card">
     <h2>3-hour windows</h2>
+    <p class="cw-note" id="nbmNote" style="margin:0 0 6px;color:var(--hires)"></p>
     <div class="grid-scroll"><table class="g" id="grid"></table></div>
     <div class="legend">
       <span><i style="background:var(--sgo)"></i>Super GO</span>
@@ -248,8 +249,8 @@ table.cmp tr { cursor: pointer; }
 </main>
 
 <section class="method">
-  <p><b>Wind.</b> Each hour, every member's 10 m wind at the site is pooled, with each source's weight split across its members. <b>Super GO</b> needs the ensemble mean at or below 7.25 kt and the 99th percentile at or below 10.0 kt; <b>GO</b> needs at or below 7.75 kt and 11.5 kt; anything else is <b>NO-GO</b>. A window takes its worst hour.</p>
-  <p><b>Weather.</b> Each value is the chance a member meets the condition at some hour in the window, weight-averaged across sources and rounded to 5%. Precipitation counts anywhere within 10 nm: 1 km reflectivity of 20 dBZ or more for the hi-res models, 0.01 in/hr at the site or a 10 nm ring for the global ensembles, and NBM's 1-hour precipitation probability. Lightning counts within 10 nm and uses only explicit lightning output: the hi-res lightning field and NBM thunderstorm probability. Ceiling below 500 ft and visibility below 1 statute mile are at the site, from the hi-res models and NBM probabilities (at NBM's nearest thresholds, listed under Sources). "Any weather" counts a member once if it meets any checked condition, and is never below the lightning, ceiling or visibility rows, which only a few sources provide.</p>
+  <p><b>Wind.</b> When NBM is the only wind source switched on, the mean and 99th percentile come straight from NBM's own quantile-mapped wind distribution. Otherwise, each hour, every member's 10 m wind at the site is pooled, with each source's weight split across its members. <b>Super GO</b> needs the ensemble mean at or below 7.25 kt and the 99th percentile at or below 10.0 kt; <b>GO</b> needs at or below 7.75 kt and 11.5 kt; anything else is <b>NO-GO</b>. A window takes its worst hour.</p>
+  <p><b>Weather.</b> Each value is the chance a member meets the condition at some hour in the window, weight-averaged across sources and rounded to 5%. Precipitation counts anywhere within 10 nm: 1 km reflectivity of 20 dBZ or more for the hi-res models, 0.01 in/hr at the site or a 10 nm ring for the global ensembles, and NBM's 1-hour precipitation probability. Lightning counts within 10 nm and uses only explicit lightning output: the hi-res lightning field and NBM thunderstorm probability. Ceiling below 500 ft and visibility below 1 statute mile are at the site, from the hi-res models and NBM probabilities (at NBM's nearest thresholds, listed under Sources), plus GFS MOS and LAMP at the nearest near-sea-level station with guidance (listed under Sources). MOS gives a best-category forecast rather than a probability, so each of its two latest runs counts as one member. "Any weather" counts a member once if it meets any checked condition, and is never below the lightning, ceiling or visibility rows, which only a few sources provide.</p>
 </section>
 
 <script>
@@ -263,7 +264,7 @@ const WX = [
   { k: "v", name: "Visibility", sub: "below 1 sm", color: "#5b6875" },
 ];
 const SPARSE = new Set(["l", "c", "v"]);
-const FAMS = [["hires", "All hi-res"], ["blend", "All blends"], ["global", "All global ens"]];
+const FAMS = [["hires", "All hi-res"], ["blend", "All blends"], ["mos", "All MOS"], ["global", "All global ens"]];
 const CAT = ["SUPER GO", "GO", "NO-GO"], CATC = ["sg", "s", "v"];
 const M = { l: 44, r: 12 };
 const $ = s => document.querySelector(s);
@@ -298,8 +299,29 @@ function category(mean, p99) {
   if (mean <= C.go.mean_kt && p99 <= C.go.p99_kt) return 1;
   return 2;
 }
+// NBM-only mode: when the only wind sources switched on are NBM's, use NBM's own wind
+// distribution (quantile-mapped mean and 99th percentile) instead of pooling members.
+function nbmPctSource(site) {
+  const d = state.data, key = "w@" + site;
+  const q = d.sources.find(s => s.role === "nbm_pct" && state.enabled[s.id] && s.members.some(m => m.v["w99@" + site]));
+  if (!q) return null;
+  const wind = d.sources.filter(s => state.enabled[s.id] && s.members.some(m => m.v[key]));
+  return wind.every(s => s.family === "blend") ? q : null;
+}
 function hourlyWind(site) {
   const d = state.data, key = "w@" + site, T = d.times.length, out = [];
+  const q = nbmPctSource(site);
+  state.windMode = state.windMode || {}; state.windMode[site] = q ? "nbm" : "pool";
+  if (q) {
+    const wm = q.members[0].v["wm@" + site], w99 = q.members[0].v["w99@" + site];
+    for (let i = 0; i < T; i++) {
+      if (!w99 || w99[i] == null) { out.push(null); continue; }
+      const mean = wm && wm[i] != null ? wm[i] : null;
+      if (mean == null) { out.push(null); continue; }
+      out.push({ mean, p99: w99[i], p10: null, p90: null, n: 1, per: { [q.id]: mean }, cat: category(mean, w99[i]), nbm: true });
+    }
+    return out;
+  }
   for (let i = 0; i < T; i++) {
     const pairs = []; let n = 0; const per = {};
     for (const s of d.sources) {
@@ -369,7 +391,7 @@ function status() {
   $("#statusTitle").textContent = W.custom ? `Your window: ${local(W.a * 1000)} to ${local(W.b * 1000)}` : "Next 3 hours";
   if (!ev.hours) { $("#tiles").innerHTML = ""; $("#statusNote").textContent = "No forecast data covers that window."; $("#cmp").innerHTML = ""; return; }
   let h = `<div class="tile wind ${ev.cat == null ? "na" : CATC[ev.cat]}"><div class="n">${ev.cat == null ? "–" : CAT[ev.cat]}</div>
-    <div class="l">Wind at ${state.site}</div><div class="x">Highest hourly mean ${ev.mean?.toFixed(1) ?? "–"} kt, 99th percentile ${ev.p99?.toFixed(1) ?? "–"} kt<br>GO ≤ ${C.go.mean_kt} / ${C.go.p99_kt} kt, Super GO ≤ ${C.super_go.mean_kt} / ${C.super_go.p99_kt} kt</div></div>`;
+    <div class="l">Wind at ${state.site}${state.windMode?.[state.site] === "nbm" ? ", NBM distribution" : ""}</div><div class="x">Highest hourly mean ${ev.mean?.toFixed(1) ?? "–"} kt, 99th percentile ${ev.p99?.toFixed(1) ?? "–"} kt<br>GO ≤ ${C.go.mean_kt} / ${C.go.p99_kt} kt, Super GO ≤ ${C.super_go.mean_kt} / ${C.super_go.p99_kt} kt</div></div>`;
   for (const X of WX) {
     const v = ev.wx[X.k];
     h += `<div class="tile ${wcls(v)}"><div class="n">${v == null ? "–" : v + "%"}</div><div class="l">${X.name}</div><div class="x">${X.sub}</div>
@@ -425,6 +447,7 @@ function grid() {
   for (const X of WX) h += `<tr><td class="rowh">${X.name}<small>${X.sub}</small></td>` + cols.map((c, i) => { const v = c.ev.wx[X.k]; return `<td class="p ${wcls(v)}${pc(c)}" data-i="${i}">${v == null ? "–" : v + "%"}</td>`; }).join("") + "</tr>";
   h += `<tr><td class="rowh">Any weather<small>checked conditions</small></td>` + cols.map((c, i) => `<td class="p ${wcls(c.ev.any)}${pc(c)}" data-i="${i}">${c.ev.any == null ? "–" : c.ev.any + "%"}</td>`).join("") + "</tr>";
   $("#grid").innerHTML = h + "</tbody>";
+  $("#nbmNote").textContent = state.windMode?.[state.site] === "nbm" ? "Wind rows are using NBM's own mean and 99th percentile, because NBM is the only wind source switched on." : "";
   $("#grid").querySelectorAll("td.p").forEach(td => td.addEventListener("click", () => { const c = state.cols[+td.dataset.i]; setCustom(c.a, c.b); refreshViews(); }));
   if (!state.scrolled) { const i = cols.findIndex(c => c.b > now), th = $("#grid").querySelectorAll("th.hr")[Math.max(0, i)]; if (th) $(".grid-scroll").scrollLeft = Math.max(0, th.offsetLeft - 170); state.scrolled = true; }
 }
@@ -498,7 +521,8 @@ function readout() {
   let h = `<div class="when">${zHour(t)}<small>${local(t)}</small></div>`;
   if (!s) { $("#readout").innerHTML = h + `<p class="sub">No wind data for this hour.</p>`; return; }
   h += `<div class="cat" style="background:var(${["--sgo", "--slight", "--severe"][s.cat]})">${CAT[s.cat]}</div>
-    <div class="sub">Mean ${s.mean.toFixed(1)} kt, 99th percentile ${s.p99.toFixed(1)} kt, 10–90% ${s.p10.toFixed(1)}–${s.p90.toFixed(1)} kt (${s.n} members)</div><table>`;
+    <div class="sub">${s.nbm ? `NBM mean ${s.mean.toFixed(1)} kt, NBM 99th percentile ${s.p99.toFixed(1)} kt (from NBM's own wind distribution)`
+      : `Mean ${s.mean.toFixed(1)} kt, 99th percentile ${s.p99.toFixed(1)} kt, 10–90% ${s.p10.toFixed(1)}–${s.p90.toFixed(1)} kt (${s.n} members)`}</div><table>`;
   for (const X of WX) { const v = state.wxh?.[X.k]?.[i]; h += `<tr><td>${X.name} ${X.sub}</td><td class="v2">${v == null ? "–" : Math.round(v * 100) + "%"}</td></tr>`; }
   h += `<tr><td colspan="2" class="sub" style="padding-top:8px">Mean wind by source</td></tr>`;
   for (const src of d.sources) if (s.per[src.id] != null) h += `<tr><td>${src.label}</td><td class="v2">${s.per[src.id].toFixed(1)} kt</td></tr>`;
@@ -518,7 +542,7 @@ function sourceList() {
   $("#srclist").innerHTML = state.data.sources.map(s => { const has = s.members.length > 0;
     return `<li><input type="checkbox" id="src-${s.id}" data-id="${s.id}" ${state.enabled[s.id] ? "checked" : ""} ${has ? "" : "disabled"}>
       <label class="nm" for="src-${s.id}"><span class="dot" style="background:var(--${s.family})"></span>${s.label}</label><span class="chip ${s.status}">${s.status}</span>
-      <span class="meta">${has ? `${s.members.length} member${s.members.length > 1 ? "s" : ""}, weight ${s.weight}` : "no data"}${s.cycle ? `, ${s.cycle.replace("T", " ")}` : ""}${s.note ? `. ${s.note}` : ""}</span></li>`; }).join("");
+      <span class="meta">${s.role === "nbm_pct" ? (has ? "used for wind when NBM is the only wind source on" : "no data") : has ? `${s.members.length} member${s.members.length > 1 ? "s" : ""}, weight ${s.weight}` : "no data"}${s.cycle ? `, ${s.cycle.replace("T", " ")}` : ""}${s.note ? `. ${s.note}` : ""}</span></li>`; }).join("");
   $("#srclist").querySelectorAll("input").forEach(cb => cb.addEventListener("change", () => { state.enabled[cb.dataset.id] = cb.checked; saveOff(); recompute(); }));
   famToggles();
 }
