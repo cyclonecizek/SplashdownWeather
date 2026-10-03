@@ -55,6 +55,21 @@ def main():
             for comp in s["components"]:
                 print(f"  {comp['id']}:")
                 probe(comp["base"], comp["file"], syn(comp.get("cycles", [0, 6, 12, 18])), show_fields)
+        elif s["kind"] == "mos":
+            from .src_mos import _get
+            rt = int(now // 21600 * 21600)
+            for site, cands in s["stations"].items():
+                for st in cands:
+                    rows = []
+                    for k in range(4):
+                        rows = _get(st["id"], s["model"], rt - k * 21600)
+                        if rows:
+                            break
+                    keys = sorted(rows[0].keys()) if rows else []
+                    print(f"    {site} {st['id']}: {len(rows)} rows" + (f"; fields {keys}; first cig/vis {rows[0].get('cig')}/{rows[0].get('vis')}" if rows else ""))
+        elif s["kind"] == "nbm_qmd":
+            probe(s["base"], s["file"], syn(s.get("cycles", [0, 6, 12, 18])),
+                  lambda inv: print("\n".join(f"       {r[3]}" for r in inv if ":WIND:10 m above ground:" in r[3])[:3000] or "       -- no 10 m WIND records"), fh=6)
         elif s["kind"] == "nbm_prob":
             probe(s["base"], s["file"], syn(s.get("cycles", [0, 6, 12, 18])), show_nbm, fh=6)
         else:

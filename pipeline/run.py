@@ -13,10 +13,11 @@ import time
 
 import yaml
 
-from . import src_ncep, src_web
+from . import src_mos, src_ncep, src_web
 from .common import Context, PointCache, SourceResult, floor_hour, iso, log
 
 KINDS = {"tle": src_ncep.tle, "multi_model": src_ncep.multi_model, "nbm_prob": src_ncep.nbm_prob,
+         "nbm_qmd": src_ncep.nbm_qmd, "mos": src_mos.mos,
          "openmeteo_ens": src_web.openmeteo_ens, "openmeteo_det": src_web.openmeteo_det}
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -57,6 +58,7 @@ def build(cfg, only=None):
         el = round(time.time() - t0, 1)
         log.info("%-10s %-8s %3d members %6.1fs  %s", scfg["id"], res.status, len(members), el, res.note)
         sources.append({"id": scfg["id"], "label": scfg.get("label", scfg["id"]), "family": scfg.get("family", "global"),
+                        "role": scfg.get("role", ""),
                         "weight": float(scfg.get("weight", 1)), "status": res.status, "cycle": res.cycle,
                         "note": res.note, "seconds": el, "members": members})
     cache.save()
