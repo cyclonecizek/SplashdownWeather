@@ -72,6 +72,51 @@ sources:
     max_fh: 192
     max_period_h: 6
 
+  # GFS MOS and LAMP: ceiling and visibility only, at the nearest near-sea-level station
+  # with guidance (candidates tried in order). Best-category forecasts, so each run is one
+  # member; the latest two runs of each are used.
+  - id: gfs_mos
+    kind: mos
+    label: GFS MOS
+    family: mos
+    weight: 1
+    model: GFS
+    runs: 2
+    stations: &mos_stations
+      OCN:
+        - {id: KOKB, lat: 33.219, lon: -117.349}   # Oceanside Municipal, ~28 ft
+        - {id: KNFG, lat: 33.301, lon: -117.355}   # Camp Pendleton MCAS, ~78 ft
+      LOS:
+        - {id: KNTD, lat: 34.120, lon: -119.121}   # Point Mugu NAS, ~13 ft
+        - {id: KOXR, lat: 34.201, lon: -119.207}   # Oxnard, ~43 ft
+      SAND:
+        - {id: KNZY, lat: 32.699, lon: -117.215}   # North Island NAS, ~26 ft
+        - {id: KSAN, lat: 32.734, lon: -117.190}   # San Diego Intl, ~17 ft
+        - {id: KNRS, lat: 32.567, lon: -117.117}   # Imperial Beach NOLF, ~23 ft
+
+  - id: lamp
+    kind: mos
+    label: LAMP
+    family: mos
+    weight: 1
+    model: LAV
+    runs: 2
+    stations: *mos_stations
+
+  # NBM's own wind distribution (quantile-mapped percentiles). Not a member: the page uses
+  # its mean and 99th percentile directly when NBM is the only wind source switched on.
+  - id: nbm_qmd
+    kind: nbm_qmd
+    role: nbm_pct
+    label: NBM wind percentiles
+    family: blend
+    weight: 2
+    base: https://noaa-nbm-grib2-pds.s3.amazonaws.com
+    file: "blend.{ymd}/{hh}/qmd/blend.t{hh}z.qmd.f{fh:03d}.co.grib2"
+    cycles: [0, 6, 12, 18]
+    max_fh: 192
+    percentile: 99
+
   # NBM deterministic wind (feeds the wind statistics as one member).
   - {id: nbm,       kind: openmeteo_det, label: NBM wind,        family: blend,  weight: 2, model: ncep_nbm_conus, only: [w]}
   - {id: ecmwf_ens, kind: openmeteo_ens, label: ECMWF ENS,       family: global, weight: 2, model: ecmwf_ifs025}
