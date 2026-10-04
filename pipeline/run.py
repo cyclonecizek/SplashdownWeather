@@ -17,7 +17,7 @@ from . import src_mos, src_ncep, src_web
 from .common import Context, PointCache, SourceResult, floor_hour, iso, log
 
 KINDS = {"tle": src_ncep.tle, "multi_model": src_ncep.multi_model, "nbm_prob": src_ncep.nbm_prob,
-         "nbm_qmd": src_ncep.nbm_qmd, "mos": src_mos.mos,
+         "nbm_qmd": src_ncep.nbm_qmd, "mos": src_mos.mos, "ensprob": src_ncep.ensprob,
          "openmeteo_ens": src_web.openmeteo_ens, "openmeteo_det": src_web.openmeteo_det}
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

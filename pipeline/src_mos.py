@@ -1,6 +1,8 @@
 """GFS MOS (MAV) and LAMP (LAV) ceiling and visibility at the nearest near-sea-level
 station to each site, from the Iowa Environmental Mesonet MOS service.
 
+Also dd@site, the 2 m dew point depression (C), from the MOS temperature and dew point.
+
 MOS text guidance gives a best-category forecast, not threshold probabilities, so each
 run counts as one member (the latest `runs` runs make a small time-lagged set):
     c@site = 1 when the ceiling category is below ceiling_ft   (cat 1 <200 ft, 2 200-400 ft)
@@ -82,6 +84,9 @@ def mos(scfg: dict, ctx: Context) -> SourceResult:
                         continue
                     rec = members.setdefault(mid, {}).setdefault(t, {})
                     cig, vis = _num(row.get("cig")), _num(row.get("vis"))
+                    tmp, dpt = _num(row.get("tmp")), _num(row.get("dpt"))
+                    if tmp is not None and dpt is not None and -60 < dpt <= tmp + 1 < 140:
+                        rec[f"dd@{site['id']}"] = round(max(0.0, (tmp - dpt) * 5 / 9), 2)   # F to C
                     if cig in CIG_TOP_FT:
                         rec[f"c@{site['id']}"] = int(CIG_TOP_FT[cig] <= cig_lim)
                     if vis in VIS_TOP_SM:

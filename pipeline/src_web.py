@@ -1,7 +1,9 @@
 """Open-Meteo sources sampled at each site plus a 6-point ring at the precip radius.
 
 Record keys "<var>@<site>": w = 10 m wind (kt) at the site; p = 1 h precip >= precip_in at
-the site or any ring point (0/1). Global ensembles have no lightning, ceiling or visibility
+the site or any ring point (0/1); dd = 2 m dew point depression (C) at the site;
+cs = low-ceiling stand-in (0/1) from dew point depression and low cloud cover, used only
+where no source with direct ceiling guidance covers a window. Global ensembles have no lightning, ceiling or visibility
 output, so they don't feed those rows.
 """
 from __future__ import annotations
@@ -16,7 +18,7 @@ from .common import SESSION, Context, SourceResult, log
 
 ENS_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
 DET_URL = "https://api.open-meteo.com/v1/forecast"
-_KEY = re.compile(r"^(wind_speed_10m|precipitation)(?:_member(\d+))?$")
+_KEY = re.compile(r"^(wind_speed_10m|precipitation|temperature_2m|dew_point_2m|cloud_cover_low)(?:_member(\d+))?$")
 
 
 def _points(ctx):
@@ -33,10 +35,17 @@ def _points(ctx):
 
 def _fetch(url, model, ctx, pts, variables):
     days = max(1, math.ceil((ctx.t_end - ctx.now) / 86400) + 1)
-    r = SESSION.get(url, timeout=180, params={
-        "latitude": ",".join(str(p[1]) for p in pts), "longitude": ",".join(str(p[2]) for p in pts),
-        "models": model, "hourly": ",".join(variables), "wind_speed_unit": "kn", "precipitation_unit": "inch",
-        "timeformat": "unixtime", "timezone": "GMT", "past_days": 1, "forecast_days": min(days, 16)})
+    variables = list(variables)
+    for _ in range(len(variables)):
+        r = SESSION.get(url, timeout=180, params={
+            "latitude": ",".join(str(p[1]) for p in pts), "longitude": ",".join(str(p[2]) for p in pts),
+            "models": model, "hourly": ",".join(variables), "wind_speed_unit": "kn", "precipitation_unit": "inch",
+            "timeformat": "unixtime", "timezone": "GMT", "past_days": 1, "forecast_days": min(days, 16)})
+        bad = [v for v in variables if v in r.text] if r.status_code == 400 else []
+        if not bad:
+            break
+        log.info("%s: dropping unsupported %s", model, bad[0])
+        variables.remove(bad[0])
     r.raise_for_status()
     js = r.json()
     return js if isinstance(js, list) else [js]
@@ -65,6 +74,20 @@ def _members(locs, pts, ctx, only):
                 w = f.get("wind_speed_10m")
                 if "w" in only and w and w[0] is not None and w[0][i] is not None:
                     rec[f"w@{sid}"] = round(w[0][i], 2)
+                tt, td = f.get("temperature_2m"), f.get("dew_point_2m")
+                if "d" in only and tt and td and tt[0] is not None and td[0] is not None \
+                        and tt[0][i] is not None and td[0][i] is not None:
+                    dd = max(0.0, tt[0][i] - td[0][i])
+                    rec[f"dd@{sid}"] = round(dd, 2)
+                    # Ceiling stand-in: cloud base of lifted surface air (about lcl_m_per_c metres per
+                    # degree of dew point depression) below the ceiling limit, with low cloud cover at
+                    # or above standin_low_cloud_pct when the model provides it.
+                    if "cs" in only:
+                        lc = f.get("cloud_cover_low")
+                        low = lc[0][i] if lc and lc[0] is not None else None
+                        base_m = dd * float(c.get("lcl_m_per_c", 125))
+                        hit = base_m < c["ceiling_ft"] * 0.3048 and (low is None or low >= c.get("standin_low_cloud_pct", 70))
+                        rec[f"cs@{sid}"] = int(hit)
                 pr = f.get("precipitation")
                 if "p" in only and pr:
                     vals = [a[i] for a in pr if a is not None and a[i] is not None]
@@ -76,8 +99,12 @@ def _members(locs, pts, ctx, only):
 
 
 def _source(scfg, ctx, url):
-    only = set(scfg.get("only", ["w", "p"]))
+    only = set(scfg.get("only", ["w", "p", "d", "cs"]))
     variables = [v for k, v in (("w", "wind_speed_10m"), ("p", "precipitation")) if k in only]
+    if "d" in only:
+        variables += ["temperature_2m", "dew_point_2m"]
+    if "cs" in only:
+        variables += ["cloud_cover_low"]
     path = os.path.join(ctx.root, "cache", f"om_{scfg['id']}.json")
     try:
         with open(path) as f:

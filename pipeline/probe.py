@@ -70,6 +70,11 @@ def main():
         elif s["kind"] == "nbm_qmd":
             probe(s["base"], s["file"], syn(s.get("cycles", [0, 6, 12, 18])),
                   lambda inv: print("\n".join(f"       {r[3]}" for r in inv if ":WIND:10 m above ground:" in r[3])[:3000] or "       -- no 10 m WIND records"), fh=6)
+        elif s["kind"] == "ensprob":
+            syn6 = syn(s.get("cycles", [0, 6, 12, 18]))
+            for b in s["bases"]:
+                print(f"  {b}")
+                probe(b, s["file"], syn6, lambda inv: print("\n".join(f"       {r[3]}" for r in inv if ("CEIL" in r[3] or "cloud ceiling" in r[3] or ":VIS:" in r[3]))[:3000] or "       -- no ceiling/visibility records"))
         elif s["kind"] == "nbm_prob":
             probe(s["base"], s["file"], syn(s.get("cycles", [0, 6, 12, 18])), show_nbm, fh=6)
         else:

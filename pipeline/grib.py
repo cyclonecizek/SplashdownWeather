@@ -32,6 +32,8 @@ POINT = {
     "v10": r":VGRD:10 m above ground:",
     "ceil": r":HGT:cloud ceiling:",
     "vis": r":VIS:surface:",
+    "t2": r":TMP:2 m above ground:",
+    "td2": r":DPT:2 m above ground:",
 }
 AREA = {
     "refd": r":REFD:1000 m above ground:",

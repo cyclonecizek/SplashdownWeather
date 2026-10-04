@@ -7,6 +7,7 @@ Record keys "<var>@<site>":
     l     lightning within the radius: lightning field > ltng_threshold                    (0/1)
     c     ceiling below ceiling_ft at the site (no ceiling counts as 0)                     (0/1)
     v     visibility below vis_sm at the site                                               (0/1)
+    dd    2 m dew point depression at the site (C), for situational awareness
 NBM records use probabilities (0-1) for p, l, c and v.
 """
 from __future__ import annotations
@@ -45,7 +46,7 @@ def _raw(url, cycle, ctx):
             uv = earth_relative(u, v, meta.get("u10"), site["lon"])
             if uv:
                 o["w"] = round(math.hypot(*uv) * MS_TO_KT, 2)
-        for k in ("refd", "refc", "ltng", "vis"):
+        for k in ("refd", "refc", "ltng", "vis", "t2", "td2"):
             if k in vals and vals[k].get(sid) is not None:
                 o[k] = vals[k][sid]
         if "ceil" in vals:                    # field present: undefined means no ceiling
@@ -74,6 +75,8 @@ def record(raw, ctx):
             rec[f"c@{sid}"] = int(h is not None and 0 <= h < c["ceiling_ft"] * FT_M)
         if o.get("vis") is not None:
             rec[f"v@{sid}"] = int(o["vis"] < c["vis_sm"] * SM_M)
+        if o.get("t2") is not None and o.get("td2") is not None:
+            rec[f"dd@{sid}"] = round(max(0.0, o["t2"] - o["td2"]), 2)     # K difference = C difference
     return rec or None
 
 
@@ -302,4 +305,78 @@ def nbm_qmd(scfg, ctx):
     pct = ", ".join(f"{p:g}th" for p in sorted(used)) or "none found"
     return SourceResult({"m00": series} if series else {}, cycle=iso(cycle),
                         note=f"QMD mean and {pct} percentile 10 m wind",
+                        status="ok" if series else "missing")
+
+
+# ---------------------------------------------------------------- REFS / HREF aviation probabilities
+_CEILREC = re.compile(r":(CEIL:[^:]*|HGT:cloud ceiling):", re.I)
+_VISREC = re.compile(r":VIS:surface:", re.I)
+
+
+def ensprob(scfg, ctx):
+    """Ensemble probabilities of a low ceiling and low visibility at each site from REFS or
+    HREF probability files, using the thresholds closest to the limits (named in the note).
+    Stored as one member of probabilities (0-1) in c@site and v@site."""
+    c = ctx.cons
+    want = {"c": c["ceiling_ft"] * FT_M, "v": c["vis_sm"] * SM_M}
+    cands = [x for x in (floor_hour(ctx.now) - k * 3600 for k in range(36))
+             if time.gmtime(x).tm_hour in set(scfg.get("cycles", [0, 6, 12, 18]))]
+    picked = _pick(scfg["bases"], scfg["file"], cands)
+    if not picked:
+        return SourceResult({}, status="missing", note="no recent cycle found")
+    base, cycle = picked
+    used = {}
+
+    def select(inv):
+        opts = {"c": [], "v": []}
+        for rec in inv:
+            d = rec[3]
+            th = _THR.search(d)
+            if not th or th.group(1) != "<":
+                continue
+            key = "c" if _CEILREC.search(d) else "v" if _VISREC.search(d) else None
+            if key:
+                opts[key].append((float(th.group(2)), rec))
+        out = []
+        for key, o in opts.items():
+            if o:
+                thr, rec = min(o, key=lambda x: abs(math.log(max(x[0], 1) / want[key])))
+                used[key] = thr
+                out.append((f"{key}<{thr:g}", rec, "point"))
+        return out
+
+    def run(fh):
+        url = f"{base}/{_fmt(scfg['file'], cycle, fh)}"
+        got = ctx.cache.get(url + "#avn")
+        if got is None:
+            try:
+                vals = fetch_select(url, select, ctx.sites, float(c["radius_nm"]))
+            except Missing:
+                return None
+            except Exception as e:
+                log.warning("%s f%02d: %s", scfg["id"], fh, e)
+                return None
+            got = {k: d for k, d in vals.items() if isinstance(d, dict)}
+            ctx.cache.put(url + "#avn", cycle, got)
+        return fh, got
+
+    fhs = [fh for fh in range(1, int(scfg.get("max_fh", 48)) + 1) if ctx.in_window(cycle + fh * 3600)]
+    series, thr = {}, set()
+    with ThreadPoolExecutor(4) as ex:
+        for res in ex.map(run, fhs):
+            if not res:
+                continue
+            fh, got = res
+            rec = {}
+            for name, bysite in got.items():
+                key = name[0]
+                thr.add(("ceiling" if key == "c" else "visibility") + f" < {name[2:]} m")
+                for sid, v in bysite.items():
+                    if v is not None:
+                        rec[f"{key}@{sid}"] = round(min(1.0, max(0.0, v / 100.0)), 3)
+            if rec:
+                series[cycle + fh * 3600] = rec
+    note = ("; ".join(sorted(thr)) or "no ceiling/visibility probabilities in the files") + \
+        ("; parallel feed" if base.endswith("/para") else "")
+    return SourceResult({"m00": series} if series else {}, cycle=iso(cycle), note=note,
                         status="ok" if series else "missing")
