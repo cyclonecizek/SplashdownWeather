@@ -145,7 +145,7 @@ table.g th.day.past, table.g th.hr.past { opacity: .45; }
 td.dd0 { background: color-mix(in srgb, var(--rule) 40%, var(--panel)); }
 .tile.dd0 { background: color-mix(in srgb, var(--rule) 50%, var(--panel)); }
 td.sg { background: color-mix(in srgb, var(--sgo) 80%, var(--panel)); color: #fff; }
-.tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(6, minmax(105px, 1fr)); gap: 10px; }
+.tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(7, minmax(100px, 1fr)); gap: 10px; }
 @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .tiles .wind { grid-column: 1 / -1; } }
 .tile { border-radius: 6px; padding: 10px 12px; border: 1px solid var(--rule); }
 .tile .n { font-size: 30px; font-weight: 700; line-height: 1; }
@@ -239,6 +239,10 @@ table.cmp tr { cursor: pointer; }
         <h3>Hourly weather chances <span class="key"><span><i class="sw" style="background:#2f7fd1"></i>Precip ≤10 nm</span><span><i class="sw" style="background:#d4a017"></i>Lightning ≤10 nm</span><span><i class="sw" style="background:#7a5bbf"></i>Ceiling &lt;500 ft</span><span style="color:#7a5bbf"><i class="sw dash"></i>Ceiling stand-in</span><span><i class="sw" style="background:#5b6875"></i>Visibility &lt;1 sm</span></span></h3>
         <canvas></canvas><canvas class="ov"></canvas>
       </div>
+      <div class="chart" data-kind="ml">
+        <h3>Marine layer: inversion base <span class="key"><span><i class="sw" style="background:var(--line)"></i>Median base</span><span><i class="sw" style="background:var(--global);opacity:.4;height:8px"></i>10–90% of members</span><span><i class="sw" style="background:var(--marginal)"></i>Below the setup limit</span><span>Gaps: most members have no low inversion</span></span></h3>
+        <canvas></canvas><canvas class="ov"></canvas>
+      </div>
       <div class="chart" data-kind="dd">
         <h3>Dew point depression <span class="key"><span><i class="sw" style="background:var(--line)"></i>Ensemble median</span><span><i class="sw" style="background:var(--global);opacity:.4;height:8px"></i>10–90% of members</span><span><i class="sw" style="background:var(--marginal)"></i>3 °C</span><span><i class="sw" style="background:var(--severe)"></i>1 °C</span></span></h3>
         <canvas></canvas><canvas class="ov"></canvas>
@@ -258,6 +262,7 @@ table.cmp tr { cursor: pointer; }
 <section class="method">
   <p><b>Wind.</b> When NBM is the only wind source switched on, the mean and 99th percentile come straight from NBM's own quantile-mapped wind distribution. Otherwise, each hour, every member's 10 m wind at the site is pooled, with each source's weight split across its members. <b>Super GO</b> needs the ensemble mean at or below 7.25 kt and the 99th percentile at or below 10.0 kt; <b>GO</b> needs at or below 7.75 kt and 11.5 kt; anything else is <b>NO-GO</b>. A window takes its worst hour.</p>
   <p><b>Ceiling and visibility sources.</b> Direct guidance comes from the hi-res models' own ceiling and visibility, REFS and HREF ensemble probabilities, NBM probabilities, and GFS MOS and LAMP. Where none of these covers a window (mostly beyond about 3 days), the ceiling row falls back to a stand-in from the global ensembles: a member counts when the cloud base of lifted surface air (about 125 m per °C of dew point depression) is below 500 ft and low cloud cover is at least 70% (when the model provides it). Stand-in cells are hatched.</p>
+  <p><b>Marine layer setup</b> (awareness only, not a constraint) finds the lowest temperature inversion above each site in every member that has a temperature profile: HRRR at 25 mb steps from 1000 to 850 mb, and the global ensembles at the pressure levels Open-Meteo provides. A member counts when the inversion base is at or below 500 m, it warms at least 3 °C across the inversion, and the air under it is moist (2 m dew point depression of 2.5 °C or less, or 1000 mb humidity of 90% or more). The chart shows the median inversion base; limits are in config.yaml.</p>
   <p><b>Dew point depression</b> (2 m temperature minus dew point, °C) is shown for awareness of fog and low visibility potential and does not count toward GO/NO-GO. It is the weighted median across every model and MOS member; a window shows its lowest hourly median. Yellow is within 3 °C, red within 1 °C.</p>
   <p><b>Weather.</b> Each value is the chance a member meets the condition at some hour in the window, weight-averaged across sources and rounded to 5%. Precipitation counts anywhere within 10 nm: 1 km reflectivity of 20 dBZ or more for the hi-res models, 0.01 in/hr at the site or a 10 nm ring for the global ensembles, and NBM's 1-hour precipitation probability. Lightning counts within 10 nm and uses only explicit lightning output: the hi-res lightning field and NBM thunderstorm probability. Ceiling below 500 ft and visibility below 1 statute mile are at the site, from the hi-res models and NBM probabilities (at NBM's nearest thresholds, listed under Sources), plus GFS MOS and LAMP at the nearest near-sea-level station with guidance (listed under Sources). MOS gives a best-category forecast rather than a probability, so each of its two latest runs counts as one member. "Any weather" counts a member once if it meets any checked condition, and is never below the lightning, ceiling or visibility rows, which only a few sources provide.</p>
 </section>
@@ -277,7 +282,7 @@ const FAMS = [["hires", "All hi-res"], ["blend", "All blends"], ["mos", "All MOS
 const CAT = ["SUPER GO", "GO", "NO-GO"], CATC = ["sg", "s", "v"];
 const M = { l: 44, r: 12 };
 const $ = s => document.querySelector(s);
-const state = { dd: {}, data: null, site: null, enabled: {}, cw: { a: null, b: null }, inc: new Set(["p", "l", "c", "v"]), hover: null, hourly: {}, cols: [] };
+const state = { ml: {}, dd: {}, data: null, site: null, enabled: {}, cw: { a: null, b: null }, inc: new Set(["p", "l", "c", "v"]), hover: null, hourly: {}, cols: [] };
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const alpha = (hex, a) => { const n = parseInt(hex.replace("#", ""), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; };
@@ -359,6 +364,26 @@ function hourlyDD(site) {
   }
   return out;
 }
+function hourlyML(site) {
+  const d = state.data, T = d.times.length, out = [];
+  for (let i = 0; i < T; i++) {
+    const base = [], str = []; let num = 0, den = 0;
+    for (const s of d.sources) {
+      if (!state.enabled[s.id]) continue;
+      const ms = s.members.filter(m => m.v["ml@" + site] && m.v["ml@" + site][i] != null);
+      if (!ms.length) continue;
+      const w = s.weight / ms.length;
+      num += s.weight * ms.filter(m => m.v["ml@" + site][i]).length / ms.length; den += s.weight;
+      for (const m of ms) {
+        const b = m.v["mlb@" + site]?.[i], st = m.v["mls@" + site]?.[i];
+        base.push([b == null ? 9999 : b, w]);          // no inversion counts as "very deep"
+        if (st != null) str.push([st, w]);
+      }
+    }
+    out.push(den ? { p: num / den, b50: wq(base, .5), b10: wq(base, .1), b90: wq(base, .9), s50: str.length ? wq(str, .5) : null } : null);
+  }
+  return out;
+}
 const ddLvl = v => { const C = state.data.constraints; return v == null ? null : v <= (C.dd_warning_c ?? 1) ? 2 : v <= (C.dd_caution_c ?? 3) ? 1 : 0; };
 const DDC = ["dd0", "m", "v"];
 function stepHours(times, a) {
@@ -382,6 +407,7 @@ function evaluate(site, a, b) {
   const inc = [...state.inc], need = inc.filter(k => !SPARSE.has(k));
   const acc = {}; for (const W of WX) acc[W.k] = { num: 0, den: 0, per: {} };
   acc.cs = { num: 0, den: 0, per: {} };          // global-ensemble ceiling stand-in
+  acc.ml = { num: 0, den: 0, per: {} };          // marine layer setup (awareness only)
   const any = { num: 0, den: 0 };
   for (const s of d.sources) {
     if (!s.members.length || !state.enabled[s.id]) continue;
@@ -398,6 +424,10 @@ function evaluate(site, a, b) {
       if (have.length && need.every(k => k in judged)) { aN++; aHit += Math.max(...have.map(k => judged[k])); }
     }
     for (const W of WX) if (cnt[W.k].n) { const f = cnt[W.k].hit / cnt[W.k].n; acc[W.k].num += s.weight * f; acc[W.k].den += s.weight; acc[W.k].per[s.id] = f; }
+    for (const extra of ["ml"]) { let hit = 0, n = 0; const key = extra + "@" + site;
+      for (const m of s.members) { const x = m.v[key]; if (!x) continue; const vals = hours.map(i => x[i]).filter(v => v != null);
+        if (vals.length >= Math.max(1, Math.floor(cov * nh / step(m, key)))) { n++; hit += Math.max(...vals); } }
+      if (n) { acc[extra].num += s.weight * hit / n; acc[extra].den += s.weight; acc[extra].per[s.id] = hit / n; } }
     { let hit = 0, n = 0; const key = "cs@" + site;
       for (const m of s.members) { const x = m.v[key]; if (!x) continue; const vals = hours.map(i => x[i]).filter(v => v != null);
         if (vals.length >= Math.max(1, Math.floor(cov * nh / step(m, key)))) { n++; hit += Math.max(...vals); } }
@@ -406,6 +436,7 @@ function evaluate(site, a, b) {
   }
   for (const W of WX) out.wx[W.k] = acc[W.k].den ? r5(acc[W.k].num / acc[W.k].den) : null;
   out.si = {};
+  out.ml = acc.ml.den ? r5(acc.ml.num / acc.ml.den) : null;
   if (out.wx.c == null && acc.cs.den) { out.wx.c = r5(acc.cs.num / acc.cs.den); out.si.c = true; }   // stand-in, lower confidence
   let p = any.den ? r5(any.num / any.den) : null;
   for (const k of inc) if (SPARSE.has(k) && out.wx[k] != null) p = Math.max(p ?? 0, out.wx[k]);
@@ -431,12 +462,13 @@ function status() {
       <label><input type="checkbox" data-k="${X.k}" ${state.inc.has(X.k) ? "checked" : ""}> in "any weather"</label></div>`;
   }
   h += `<div class="tile ${wcls(ev.any)}"><div class="n">${ev.any == null ? "–" : ev.any + "%"}</div><div class="l">Any weather</div><div class="x">checked conditions</div></div>`;
+  h += `<div class="tile ${wcls(ev.ml)}"><div class="n">${ev.ml == null ? "–" : ev.ml + "%"}</div><div class="l">Marine layer setup</div><div class="x">shallow, strong inversion over moist air; awareness only</div></div>`;
   { const l = ddLvl(ev.dd); h += `<div class="tile ${l == null ? "na" : DDC[l]}"><div class="n">${ev.dd == null ? "–" : ev.dd.toFixed(1) + "°C"}</div><div class="l">Dew point depression</div><div class="x">lowest in window, ensemble median; awareness only</div></div>`; }
   $("#tiles").innerHTML = h;
   $("#tiles").querySelectorAll("input").forEach(cb => cb.addEventListener("change", () => {
     cb.checked ? state.inc.add(cb.dataset.k) : state.inc.delete(cb.dataset.k); store.set("sd.inc", JSON.stringify([...state.inc])); refreshViews(); }));
   // site comparison
-  let t = `<tr><th></th><th>Wind</th><th>Mean / p99 (kt)</th>${WX.map(X => `<th>${X.name}</th>`).join("")}<th>Any weather</th><th>T−Td (°C)</th></tr>`;
+  let t = `<tr><th></th><th>Wind</th><th>Mean / p99 (kt)</th>${WX.map(X => `<th>${X.name}</th>`).join("")}<th>Any weather</th><th>Marine layer</th><th>T−Td (°C)</th></tr>`;
   for (const s of state.data.sites) {
     const e = evaluate(s.id, W.a, W.b);
     t += `<tr data-s="${s.id}" class="${s.id === state.site ? "cur" : ""}"><td class="site">${s.label}</td>
@@ -444,6 +476,7 @@ function status() {
       <td class="pv">${e.mean == null ? "–" : e.mean.toFixed(1) + " / " + e.p99.toFixed(1)}</td>
       ${WX.map(X => `<td class="${wcls(e.wx[X.k])}${e.si?.[X.k] ? " si" : ""}">${e.wx[X.k] == null ? "–" : e.wx[X.k] + "%"}</td>`).join("")}
       <td class="${wcls(e.any)}">${e.any == null ? "–" : e.any + "%"}</td>
+      <td class="${wcls(e.ml)}">${e.ml == null ? "–" : e.ml + "%"}</td>
       <td class="${ddLvl(e.dd) == null ? "na" : DDC[ddLvl(e.dd)]}">${e.dd == null ? "–" : e.dd.toFixed(1)}</td></tr>`;
   }
   $("#cmp").innerHTML = t;
@@ -482,6 +515,8 @@ function grid() {
   for (const X of WX) h += `<tr><td class="rowh">${X.name}<small>${X.sub}</small></td>` + cols.map((c, i) => { const v = c.ev.wx[X.k], si = c.ev.si?.[X.k];
     return `<td class="p ${wcls(v)}${si ? " si" : ""}${pc(c)}" data-i="${i}"${si ? ' title="Stand-in from global ensembles, lower confidence"' : ""}>${v == null ? "–" : v + "%"}</td>`; }).join("") + "</tr>";
   h += `<tr><td class="rowh">Any weather<small>checked conditions</small></td>` + cols.map((c, i) => `<td class="p ${wcls(c.ev.any)}${pc(c)}" data-i="${i}">${c.ev.any == null ? "–" : c.ev.any + "%"}</td>`).join("") + "</tr>";
+  h += `<tr><td class="rowh">Marine layer setup<small>chance; awareness</small></td>` + cols.map((c, i) =>
+    `<td class="p ${wcls(c.ev.ml)}${pc(c)}" data-i="${i}">${c.ev.ml == null ? "–" : c.ev.ml + "%"}</td>`).join("") + "</tr>";
   h += `<tr><td class="rowh">Dew point depression<small>°C, lowest median; awareness</small></td>` + cols.map((c, i) => {
     const l = ddLvl(c.ev.dd); return `<td class="p ${l == null ? "na" : DDC[l]}${pc(c)}" data-i="${i}">${c.ev.dd == null ? "–" : c.ev.dd.toFixed(1)}</td>`; }).join("") + "</tr>";
   $("#grid").innerHTML = h + "</tbody>";
@@ -552,6 +587,18 @@ function drawWx() {
   line(g, w, y, state.wxh.cs, "#7a5bbf", 1.6, [5, 4]);
   c.geom = { top, bot };
 }
+function drawML() {
+  const c = charts.ml, { g, w, h } = size(c.base, 170), top = 8, bot = 22, C = state.data.constraints;
+  const hm = state.ml[state.site] || (state.ml[state.site] = hourlyML(state.site)), hi = 1500;
+  const y = axes(g, w, h, top, bot, 0, hi, [0, 500, 1000, 1500], v => v + " m", true);
+  const lim = C.ml_base_max_m ?? 500;
+  g.fillStyle = alpha(css("--marginal"), .16); g.fillRect(M.l, y(lim), w - M.r - M.l, y(0) - y(lim));
+  g.fillStyle = alpha(css("--global"), .25);
+  hm.forEach((s, i) => { if (!s || s.b10 > hi) return; const x0 = xOf(i, w), x1 = xOf(i + 1, w);
+    g.fillRect(x0, y(Math.min(hi, s.b90)), Math.max(1, x1 - x0), y(s.b10) - y(Math.min(hi, s.b90))); });
+  line(g, w, y, hm.map(s => s && s.b50 <= hi ? s.b50 : null), css("--line"), 2.2);
+  c.geom = { top, bot };
+}
 function drawDD() {
   const c = charts.dd, { g, w, h } = size(c.base, 170), top = 8, bot = 22, hd = state.dd[state.site] || (state.dd[state.site] = hourlyDD(state.site));
   const C = state.data.constraints; let hi = 8; hd.forEach(s => { if (s) hi = Math.max(hi, s.p90 + 1); }); hi = Math.min(25, Math.ceil(hi / 2) * 2);
@@ -579,6 +626,10 @@ function readout() {
   for (const X of WX) { let v = state.wxh?.[X.k]?.[i], tag = "";
     if (v == null && X.k === "c" && state.wxh?.cs?.[i] != null) { v = state.wxh.cs[i]; tag = " (stand-in)"; }
     h += `<tr><td>${X.name} ${X.sub}${tag}</td><td class="v2">${v == null ? "–" : Math.round(v * 100) + "%"}</td></tr>`; }
+  { const ml = (state.ml[state.site] || [])[i];
+    h += `<tr><td>Marine layer setup</td><td class="v2">${ml ? Math.round(ml.p * 100) + "%" : "–"}</td></tr>`;
+    if (ml) h += `<tr><td>Inversion base, median</td><td class="v2">${ml.b50 > 5000 ? "none" : Math.round(ml.b50) + " m (" + Math.round(ml.b50 / 0.3048 / 10) * 10 + " ft)"}</td></tr>`;
+    if (ml && ml.s50 != null) h += `<tr><td>Inversion strength, median</td><td class="v2">${ml.s50.toFixed(1)} °C</td></tr>`; }
   { const dd = (state.dd[state.site] || [])[i]; h += `<tr><td>Dew point depression</td><td class="v2"${dd && ddLvl(dd.med) ? ` style="color:var(${ddLvl(dd.med) === 2 ? "--severe" : "--marginal"});font-weight:600"` : ""}>${dd ? dd.med.toFixed(1) + " °C" : "–"}</td></tr>`; }
   h += `<tr><td colspan="2" class="sub" style="padding-top:8px">Mean wind by source</td></tr>`;
   for (const src of d.sources) if (s.per[src.id] != null) h += `<tr><td>${src.label}</td><td class="v2">${s.per[src.id].toFixed(1)} kt</td></tr>`;
@@ -622,8 +673,8 @@ function header() {
   const bad = d.sources.filter(s => ["error", "missing"].includes(s.status)); if (bad.length) b += `<div class="banner">No data this run from ${bad.map(s => s.label).join(", ")}.</div>`;
   $("#banners").innerHTML = b; $("#cwTz").textContent = ZULU ? "Z" : parts(Date.now()).timeZoneName;
 }
-function refreshViews() { state.hourly[state.site] = state.hourly[state.site] || hourlyWind(state.site); state.cols = columns(); status(); grid(); drawWind(); drawRibbon(); drawWx(); drawDD(); overlays(); readout(); }
-function recompute() { state.hourly = {}; state.dd = {}; sourceList(); refreshViews(); }
+function refreshViews() { state.hourly[state.site] = state.hourly[state.site] || hourlyWind(state.site); state.cols = columns(); status(); grid(); drawWind(); drawRibbon(); drawWx(); drawML(); drawDD(); overlays(); readout(); }
+function recompute() { state.hourly = {}; state.dd = {}; state.ml = {}; sourceList(); refreshViews(); }
 async function load(first) {
   let d; try { const r = await fetch(DATA_URL + "?t=" + Date.now(), { cache: "no-store" }); if (!r.ok) throw new Error("HTTP " + r.status); d = await r.json(); }
   catch (e) { if (first) $("#banners").innerHTML = `<div class="banner bad">Could not load ${DATA_URL} (${e.message}). The first pipeline run creates it.</div>`; return; }
