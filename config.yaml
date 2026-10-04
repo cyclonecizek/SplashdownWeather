@@ -29,6 +29,14 @@ constraints:
   # cloud base ~ lcl_m_per_c metres per C of dew point depression, plus low cloud cover.
   lcl_m_per_c: 125
   standin_low_cloud_pct: 70
+  # Marine layer setup (situational awareness): lowest inversion in the lowest ml_max_m metres,
+  # base at or below ml_base_max_m, warming of at least ml_strength_min_c across it, and moist
+  # air under it (2 m dew point depression <= ml_dd_max_c, or 1000 mb RH >= ml_rh_min).
+  ml_max_m: 2000
+  ml_base_max_m: 500
+  ml_strength_min_c: 3
+  ml_dd_max_c: 2.5
+  ml_rh_min: 90
   vis_sm: 1                    # visibility below this at the site
 
 min_window_coverage: 0.5
@@ -110,6 +118,19 @@ sources:
     model: LAV
     runs: 2
     stations: *mos_stations
+
+  # HRRR pressure-level profiles for the marine layer diagnostics (separate files from the
+  # HRRR surface source, so it has its own time budget).
+  - id: hrrr_ml
+    kind: hrrr_profile
+    label: HRRR marine layer
+    family: hires
+    weight: 3
+    base: https://noaa-hrrr-bdp-pds.s3.amazonaws.com
+    file: "hrrr.{ymd}/conus/hrrr.t{hh}z.wrfprsf{fh:02d}.grib2"
+    lag_cycles: 4
+    synoptic_extra: 2
+    budget_min: 12
 
   # Ensemble aviation probabilities (ceiling and visibility below the thresholds nearest the
   # limits). REFS replaces HREF when RRFS goes operational; the first base with data wins.
