@@ -79,7 +79,7 @@ def mos(scfg: dict, ctx: Context) -> SourceResult:
                     continue
                 mid = time.strftime("%d/%HZ", time.gmtime(rt))
                 for row in rows:
-                    t = _ts(row.get("ftime"))
+                    t = _ts(row.get("ftime_utc") or row.get("ftime"))   # ftime is station local time
                     if t is None or not ctx.in_window(t):
                         continue
                     rec = members.setdefault(mid, {}).setdefault(t, {})

@@ -172,15 +172,16 @@ def nbm_prob(scfg, ctx):
         for rec in inv:
             d = rec[3]
             th = _THR.search(d)
-            if not th:
-                continue
             m = _PERIOD.search(d)
             if m:
                 var, a, b = m.group(1), int(m.group(2)), int(m.group(3))
-                if var == "TSTM" and 0 < b - a <= maxdur and th.group(1) == ">":
+                # NBM thunder records read "probability forecast" with no threshold
+                if var == "TSTM" and 0 < b - a <= maxdur and "prob" in d.lower() and (not th or th.group(1) == ">"):
                     out.append((f"l{a}-{b}", rec, "area"))
-                elif var == "APCP" and b - a == 1 and th.group(1) == ">" and abs(float(th.group(2)) - 0.254) < 0.01:
+                elif var == "APCP" and b - a == 1 and th and th.group(1) == ">" and abs(float(th.group(2)) - 0.254) < 0.01:
                     out.append((f"p{a}-{b}", rec, "area"))
+                continue
+            if not th:
                 continue
             m = _INST.search(d)
             if m and th.group(1) == "<":
