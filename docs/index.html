@@ -142,8 +142,10 @@ table.g th.day.past, table.g th.hr.past { opacity: .45; }
 :root { --sgo: #1c7fa6; --mos: #a8642a; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --sgo: #3aa7d1; --mos: #d08a4a; } }
 :root[data-theme="dark"] { --sgo: #3aa7d1; }
+td.dd0 { background: color-mix(in srgb, var(--rule) 40%, var(--panel)); }
+.tile.dd0 { background: color-mix(in srgb, var(--rule) 50%, var(--panel)); }
 td.sg { background: color-mix(in srgb, var(--sgo) 80%, var(--panel)); color: #fff; }
-.tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(5, minmax(110px, 1fr)); gap: 10px; }
+.tiles { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(6, minmax(105px, 1fr)); gap: 10px; }
 @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .tiles .wind { grid-column: 1 / -1; } }
 .tile { border-radius: 6px; padding: 10px 12px; border: 1px solid var(--rule); }
 .tile .n { font-size: 30px; font-weight: 700; line-height: 1; }
@@ -221,6 +223,7 @@ table.cmp tr { cursor: pointer; }
       <span><i style="background:var(--slight)"></i>GO, or weather chance under 20%</span>
       <span><i style="background:var(--marginal)"></i>Weather chance 20–50%</span>
       <span><i style="background:var(--severe)"></i>NO-GO, or weather chance over 50%</span>
+      <span><i class="si" style="background:var(--marginal)"></i>Stand-in, lower confidence</span>
       <span>Wind rows show the highest hourly ensemble mean and 99th percentile in the window (kt), each colored against its own limits; the window's wind status is the worse of the two. Blocks follow the time zone chosen above. Select a cell to set it as your window.</span>
     </div>
   </section>
@@ -233,7 +236,11 @@ table.cmp tr { cursor: pointer; }
       </div>
       <div class="chart" data-kind="ribbon"><canvas></canvas><canvas class="ov"></canvas></div>
       <div class="chart" data-kind="wx">
-        <h3>Hourly weather chances <span class="key"><span><i class="sw" style="background:#2f7fd1"></i>Precip ≤10 nm</span><span><i class="sw" style="background:#d4a017"></i>Lightning ≤10 nm</span><span><i class="sw" style="background:#7a5bbf"></i>Ceiling &lt;500 ft</span><span><i class="sw" style="background:#5b6875"></i>Visibility &lt;1 sm</span></span></h3>
+        <h3>Hourly weather chances <span class="key"><span><i class="sw" style="background:#2f7fd1"></i>Precip ≤10 nm</span><span><i class="sw" style="background:#d4a017"></i>Lightning ≤10 nm</span><span><i class="sw" style="background:#7a5bbf"></i>Ceiling &lt;500 ft</span><span style="color:#7a5bbf"><i class="sw dash"></i>Ceiling stand-in</span><span><i class="sw" style="background:#5b6875"></i>Visibility &lt;1 sm</span></span></h3>
+        <canvas></canvas><canvas class="ov"></canvas>
+      </div>
+      <div class="chart" data-kind="dd">
+        <h3>Dew point depression <span class="key"><span><i class="sw" style="background:var(--line)"></i>Ensemble median</span><span><i class="sw" style="background:var(--global);opacity:.4;height:8px"></i>10–90% of members</span><span><i class="sw" style="background:var(--marginal)"></i>3 °C</span><span><i class="sw" style="background:var(--severe)"></i>1 °C</span></span></h3>
         <canvas></canvas><canvas class="ov"></canvas>
       </div>
     </section>
@@ -250,6 +257,8 @@ table.cmp tr { cursor: pointer; }
 
 <section class="method">
   <p><b>Wind.</b> When NBM is the only wind source switched on, the mean and 99th percentile come straight from NBM's own quantile-mapped wind distribution. Otherwise, each hour, every member's 10 m wind at the site is pooled, with each source's weight split across its members. <b>Super GO</b> needs the ensemble mean at or below 7.25 kt and the 99th percentile at or below 10.0 kt; <b>GO</b> needs at or below 7.75 kt and 11.5 kt; anything else is <b>NO-GO</b>. A window takes its worst hour.</p>
+  <p><b>Ceiling and visibility sources.</b> Direct guidance comes from the hi-res models' own ceiling and visibility, REFS and HREF ensemble probabilities, NBM probabilities, and GFS MOS and LAMP. Where none of these covers a window (mostly beyond about 3 days), the ceiling row falls back to a stand-in from the global ensembles: a member counts when the cloud base of lifted surface air (about 125 m per °C of dew point depression) is below 500 ft and low cloud cover is at least 70% (when the model provides it). Stand-in cells are hatched.</p>
+  <p><b>Dew point depression</b> (2 m temperature minus dew point, °C) is shown for awareness of fog and low visibility potential and does not count toward GO/NO-GO. It is the weighted median across every model and MOS member; a window shows its lowest hourly median. Yellow is within 3 °C, red within 1 °C.</p>
   <p><b>Weather.</b> Each value is the chance a member meets the condition at some hour in the window, weight-averaged across sources and rounded to 5%. Precipitation counts anywhere within 10 nm: 1 km reflectivity of 20 dBZ or more for the hi-res models, 0.01 in/hr at the site or a 10 nm ring for the global ensembles, and NBM's 1-hour precipitation probability. Lightning counts within 10 nm and uses only explicit lightning output: the hi-res lightning field and NBM thunderstorm probability. Ceiling below 500 ft and visibility below 1 statute mile are at the site, from the hi-res models and NBM probabilities (at NBM's nearest thresholds, listed under Sources), plus GFS MOS and LAMP at the nearest near-sea-level station with guidance (listed under Sources). MOS gives a best-category forecast rather than a probability, so each of its two latest runs counts as one member. "Any weather" counts a member once if it meets any checked condition, and is never below the lightning, ceiling or visibility rows, which only a few sources provide.</p>
 </section>
 
@@ -268,7 +277,7 @@ const FAMS = [["hires", "All hi-res"], ["blend", "All blends"], ["mos", "All MOS
 const CAT = ["SUPER GO", "GO", "NO-GO"], CATC = ["sg", "s", "v"];
 const M = { l: 44, r: 12 };
 const $ = s => document.querySelector(s);
-const state = { data: null, site: null, enabled: {}, cw: { a: null, b: null }, inc: new Set(["p", "l", "c", "v"]), hover: null, hourly: {}, cols: [] };
+const state = { dd: {}, data: null, site: null, enabled: {}, cw: { a: null, b: null }, inc: new Set(["p", "l", "c", "v"]), hover: null, hourly: {}, cols: [] };
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const alpha = (hex, a) => { const n = parseInt(hex.replace("#", ""), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; };
@@ -337,6 +346,21 @@ function hourlyWind(site) {
   }
   return out;
 }
+function hourlyDD(site) {
+  const d = state.data, key = "dd@" + site, T = d.times.length, out = [];
+  for (let i = 0; i < T; i++) {
+    const pairs = [];
+    for (const s of d.sources) {
+      if (!state.enabled[s.id]) continue;
+      const v = s.members.map(m => m.v[key] ? m.v[key][i] : null).filter(x => x != null);
+      v.forEach(x => pairs.push([x, s.weight / v.length]));
+    }
+    out.push(pairs.length ? { med: wq(pairs, .5), p10: wq(pairs, .1), p90: wq(pairs, .9), n: pairs.length } : null);
+  }
+  return out;
+}
+const ddLvl = v => { const C = state.data.constraints; return v == null ? null : v <= (C.dd_warning_c ?? 1) ? 2 : v <= (C.dd_caution_c ?? 3) ? 1 : 0; };
+const DDC = ["dd0", "m", "v"];
 function stepHours(times, a) {
   const idx = []; a.forEach((x, i) => { if (x != null) idx.push(times[i]); });
   if (idx.length < 2) return 1;
@@ -352,9 +376,12 @@ function evaluate(site, a, b) {
   const hw = state.hourly[site] || (state.hourly[site] = hourlyWind(site));
   let mean = null, p99 = null;
   for (const i of hours) { const h = hw[i]; if (!h) continue; mean = Math.max(mean ?? -1, h.mean); p99 = Math.max(p99 ?? -1, h.p99); }
-  const out = { hours: hours.length, mean, p99, cat: mean == null ? null : category(mean, p99), wx: {}, any: null };
+  const out = { hours: hours.length, mean, p99, cat: mean == null ? null : category(mean, p99), wx: {}, any: null, dd: null };
+  const hd = state.dd[site] || (state.dd[site] = hourlyDD(site));
+  for (const i of hours) if (hd[i]) out.dd = Math.min(out.dd ?? 99, hd[i].med);
   const inc = [...state.inc], need = inc.filter(k => !SPARSE.has(k));
   const acc = {}; for (const W of WX) acc[W.k] = { num: 0, den: 0, per: {} };
+  acc.cs = { num: 0, den: 0, per: {} };          // global-ensemble ceiling stand-in
   const any = { num: 0, den: 0 };
   for (const s of d.sources) {
     if (!s.members.length || !state.enabled[s.id]) continue;
@@ -371,9 +398,15 @@ function evaluate(site, a, b) {
       if (have.length && need.every(k => k in judged)) { aN++; aHit += Math.max(...have.map(k => judged[k])); }
     }
     for (const W of WX) if (cnt[W.k].n) { const f = cnt[W.k].hit / cnt[W.k].n; acc[W.k].num += s.weight * f; acc[W.k].den += s.weight; acc[W.k].per[s.id] = f; }
+    { let hit = 0, n = 0; const key = "cs@" + site;
+      for (const m of s.members) { const x = m.v[key]; if (!x) continue; const vals = hours.map(i => x[i]).filter(v => v != null);
+        if (vals.length >= Math.max(1, Math.floor(cov * nh / step(m, key)))) { n++; hit += Math.max(...vals); } }
+      if (n) { acc.cs.num += s.weight * hit / n; acc.cs.den += s.weight; acc.cs.per[s.id] = hit / n; } }
     if (aN) { any.num += s.weight * aHit / aN; any.den += s.weight; }
   }
   for (const W of WX) out.wx[W.k] = acc[W.k].den ? r5(acc[W.k].num / acc[W.k].den) : null;
+  out.si = {};
+  if (out.wx.c == null && acc.cs.den) { out.wx.c = r5(acc.cs.num / acc.cs.den); out.si.c = true; }   // stand-in, lower confidence
   let p = any.den ? r5(any.num / any.den) : null;
   for (const k of inc) if (SPARSE.has(k) && out.wx[k] != null) p = Math.max(p ?? 0, out.wx[k]);
   out.any = p;
@@ -394,22 +427,24 @@ function status() {
     <div class="l">Wind at ${state.site}${state.windMode?.[state.site] === "nbm" ? ", NBM distribution" : ""}</div><div class="x">Highest hourly mean ${ev.mean?.toFixed(1) ?? "–"} kt, 99th percentile ${ev.p99?.toFixed(1) ?? "–"} kt<br>GO ≤ ${C.go.mean_kt} / ${C.go.p99_kt} kt, Super GO ≤ ${C.super_go.mean_kt} / ${C.super_go.p99_kt} kt</div></div>`;
   for (const X of WX) {
     const v = ev.wx[X.k];
-    h += `<div class="tile ${wcls(v)}"><div class="n">${v == null ? "–" : v + "%"}</div><div class="l">${X.name}</div><div class="x">${X.sub}</div>
+    h += `<div class="tile ${wcls(v)}"><div class="n">${v == null ? "–" : v + "%"}</div><div class="l">${X.name}</div><div class="x">${X.sub}${ev.si?.[X.k] ? ", stand-in (lower confidence)" : ""}</div>
       <label><input type="checkbox" data-k="${X.k}" ${state.inc.has(X.k) ? "checked" : ""}> in "any weather"</label></div>`;
   }
   h += `<div class="tile ${wcls(ev.any)}"><div class="n">${ev.any == null ? "–" : ev.any + "%"}</div><div class="l">Any weather</div><div class="x">checked conditions</div></div>`;
+  { const l = ddLvl(ev.dd); h += `<div class="tile ${l == null ? "na" : DDC[l]}"><div class="n">${ev.dd == null ? "–" : ev.dd.toFixed(1) + "°C"}</div><div class="l">Dew point depression</div><div class="x">lowest in window, ensemble median; awareness only</div></div>`; }
   $("#tiles").innerHTML = h;
   $("#tiles").querySelectorAll("input").forEach(cb => cb.addEventListener("change", () => {
     cb.checked ? state.inc.add(cb.dataset.k) : state.inc.delete(cb.dataset.k); store.set("sd.inc", JSON.stringify([...state.inc])); refreshViews(); }));
   // site comparison
-  let t = `<tr><th></th><th>Wind</th><th>Mean / p99 (kt)</th>${WX.map(X => `<th>${X.name}</th>`).join("")}<th>Any weather</th></tr>`;
+  let t = `<tr><th></th><th>Wind</th><th>Mean / p99 (kt)</th>${WX.map(X => `<th>${X.name}</th>`).join("")}<th>Any weather</th><th>T−Td (°C)</th></tr>`;
   for (const s of state.data.sites) {
     const e = evaluate(s.id, W.a, W.b);
     t += `<tr data-s="${s.id}" class="${s.id === state.site ? "cur" : ""}"><td class="site">${s.label}</td>
       <td class="${e.cat == null ? "na" : CATC[e.cat]}">${e.cat == null ? "–" : CAT[e.cat]}</td>
       <td class="pv">${e.mean == null ? "–" : e.mean.toFixed(1) + " / " + e.p99.toFixed(1)}</td>
-      ${WX.map(X => `<td class="${wcls(e.wx[X.k])}">${e.wx[X.k] == null ? "–" : e.wx[X.k] + "%"}</td>`).join("")}
-      <td class="${wcls(e.any)}">${e.any == null ? "–" : e.any + "%"}</td></tr>`;
+      ${WX.map(X => `<td class="${wcls(e.wx[X.k])}${e.si?.[X.k] ? " si" : ""}">${e.wx[X.k] == null ? "–" : e.wx[X.k] + "%"}</td>`).join("")}
+      <td class="${wcls(e.any)}">${e.any == null ? "–" : e.any + "%"}</td>
+      <td class="${ddLvl(e.dd) == null ? "na" : DDC[ddLvl(e.dd)]}">${e.dd == null ? "–" : e.dd.toFixed(1)}</td></tr>`;
   }
   $("#cmp").innerHTML = t;
   $("#cmp").querySelectorAll("tr[data-s]").forEach(tr => tr.addEventListener("click", () => setSite(tr.dataset.s)));
@@ -444,8 +479,11 @@ function grid() {
   }).join("") + "</tr>";
   h += windRow("Mean wind", `kt, GO ≤ ${C.go.mean_kt}`, e => e.mean, C.super_go.mean_kt, C.go.mean_kt, "overall");
   h += windRow("99th percentile", `kt, GO ≤ ${C.go.p99_kt}`, e => e.p99, C.super_go.p99_kt, C.go.p99_kt, "");
-  for (const X of WX) h += `<tr><td class="rowh">${X.name}<small>${X.sub}</small></td>` + cols.map((c, i) => { const v = c.ev.wx[X.k]; return `<td class="p ${wcls(v)}${pc(c)}" data-i="${i}">${v == null ? "–" : v + "%"}</td>`; }).join("") + "</tr>";
+  for (const X of WX) h += `<tr><td class="rowh">${X.name}<small>${X.sub}</small></td>` + cols.map((c, i) => { const v = c.ev.wx[X.k], si = c.ev.si?.[X.k];
+    return `<td class="p ${wcls(v)}${si ? " si" : ""}${pc(c)}" data-i="${i}"${si ? ' title="Stand-in from global ensembles, lower confidence"' : ""}>${v == null ? "–" : v + "%"}</td>`; }).join("") + "</tr>";
   h += `<tr><td class="rowh">Any weather<small>checked conditions</small></td>` + cols.map((c, i) => `<td class="p ${wcls(c.ev.any)}${pc(c)}" data-i="${i}">${c.ev.any == null ? "–" : c.ev.any + "%"}</td>`).join("") + "</tr>";
+  h += `<tr><td class="rowh">Dew point depression<small>°C, lowest median; awareness</small></td>` + cols.map((c, i) => {
+    const l = ddLvl(c.ev.dd); return `<td class="p ${l == null ? "na" : DDC[l]}${pc(c)}" data-i="${i}">${c.ev.dd == null ? "–" : c.ev.dd.toFixed(1)}</td>`; }).join("") + "</tr>";
   $("#grid").innerHTML = h + "</tbody>";
   $("#nbmNote").textContent = state.windMode?.[state.site] === "nbm" ? "Wind rows are using NBM's own mean and 99th percentile, because NBM is the only wind source switched on." : "";
   $("#grid").querySelectorAll("td.p").forEach(td => td.addEventListener("click", () => { const c = state.cols[+td.dataset.i]; setCustom(c.a, c.b); refreshViews(); }));
@@ -509,6 +547,21 @@ function drawWx() {
   const c = charts.wx, { g, w, h } = size(c.base, 190), top = 8, bot = 22;
   const y = axes(g, w, h, top, bot, 0, 1, [0, .2, .5, 1], v => Math.round(v * 100) + "%", true);
   state.wxh = {}; for (const X of WX) { state.wxh[X.k] = hourlyWx(state.site, X.k); line(g, w, y, state.wxh[X.k], X.color, 2); }
+  const cs = hourlyWx(state.site, "cs"), direct = state.wxh.c;
+  state.wxh.cs = cs.map((v, i) => direct[i] == null ? v : null);
+  line(g, w, y, state.wxh.cs, "#7a5bbf", 1.6, [5, 4]);
+  c.geom = { top, bot };
+}
+function drawDD() {
+  const c = charts.dd, { g, w, h } = size(c.base, 170), top = 8, bot = 22, hd = state.dd[state.site] || (state.dd[state.site] = hourlyDD(state.site));
+  const C = state.data.constraints; let hi = 8; hd.forEach(s => { if (s) hi = Math.max(hi, s.p90 + 1); }); hi = Math.min(25, Math.ceil(hi / 2) * 2);
+  const ticks = []; for (let t = 0; t <= hi; t += hi > 12 ? 4 : 2) ticks.push(t);
+  const y = axes(g, w, h, top, bot, 0, hi, ticks, v => v + "°", true);
+  g.fillStyle = alpha(css("--severe"), .14); g.fillRect(M.l, y(C.dd_warning_c ?? 1), w - M.l - M.r, y(0) - y(C.dd_warning_c ?? 1));
+  g.fillStyle = alpha(css("--marginal"), .16); g.fillRect(M.l, y(C.dd_caution_c ?? 3), w - M.l - M.r, y(C.dd_warning_c ?? 1) - y(C.dd_caution_c ?? 3));
+  g.fillStyle = alpha(css("--global"), .25);
+  hd.forEach((s, i) => { if (!s) return; const x0 = xOf(i, w), x1 = xOf(i + 1, w); g.fillRect(x0, y(s.p90), Math.max(1, x1 - x0), y(s.p10) - y(s.p90)); });
+  line(g, w, y, hd.map(s => s && s.med), css("--line"), 2.2);
   c.geom = { top, bot };
 }
 function overlays() {
@@ -523,7 +576,10 @@ function readout() {
   h += `<div class="cat" style="background:var(${["--sgo", "--slight", "--severe"][s.cat]})">${CAT[s.cat]}</div>
     <div class="sub">${s.nbm ? `NBM mean ${s.mean.toFixed(1)} kt, NBM 99th percentile ${s.p99.toFixed(1)} kt (from NBM's own wind distribution)`
       : `Mean ${s.mean.toFixed(1)} kt, 99th percentile ${s.p99.toFixed(1)} kt, 10–90% ${s.p10.toFixed(1)}–${s.p90.toFixed(1)} kt (${s.n} members)`}</div><table>`;
-  for (const X of WX) { const v = state.wxh?.[X.k]?.[i]; h += `<tr><td>${X.name} ${X.sub}</td><td class="v2">${v == null ? "–" : Math.round(v * 100) + "%"}</td></tr>`; }
+  for (const X of WX) { let v = state.wxh?.[X.k]?.[i], tag = "";
+    if (v == null && X.k === "c" && state.wxh?.cs?.[i] != null) { v = state.wxh.cs[i]; tag = " (stand-in)"; }
+    h += `<tr><td>${X.name} ${X.sub}${tag}</td><td class="v2">${v == null ? "–" : Math.round(v * 100) + "%"}</td></tr>`; }
+  { const dd = (state.dd[state.site] || [])[i]; h += `<tr><td>Dew point depression</td><td class="v2"${dd && ddLvl(dd.med) ? ` style="color:var(${ddLvl(dd.med) === 2 ? "--severe" : "--marginal"});font-weight:600"` : ""}>${dd ? dd.med.toFixed(1) + " °C" : "–"}</td></tr>`; }
   h += `<tr><td colspan="2" class="sub" style="padding-top:8px">Mean wind by source</td></tr>`;
   for (const src of d.sources) if (s.per[src.id] != null) h += `<tr><td>${src.label}</td><td class="v2">${s.per[src.id].toFixed(1)} kt</td></tr>`;
   $("#readout").innerHTML = h + "</table>";
@@ -566,8 +622,8 @@ function header() {
   const bad = d.sources.filter(s => ["error", "missing"].includes(s.status)); if (bad.length) b += `<div class="banner">No data this run from ${bad.map(s => s.label).join(", ")}.</div>`;
   $("#banners").innerHTML = b; $("#cwTz").textContent = ZULU ? "Z" : parts(Date.now()).timeZoneName;
 }
-function refreshViews() { state.hourly[state.site] = state.hourly[state.site] || hourlyWind(state.site); state.cols = columns(); status(); grid(); drawWind(); drawRibbon(); drawWx(); overlays(); readout(); }
-function recompute() { state.hourly = {}; sourceList(); refreshViews(); }
+function refreshViews() { state.hourly[state.site] = state.hourly[state.site] || hourlyWind(state.site); state.cols = columns(); status(); grid(); drawWind(); drawRibbon(); drawWx(); drawDD(); overlays(); readout(); }
+function recompute() { state.hourly = {}; state.dd = {}; sourceList(); refreshViews(); }
 async function load(first) {
   let d; try { const r = await fetch(DATA_URL + "?t=" + Date.now(), { cache: "no-store" }); if (!r.ok) throw new Error("HTTP " + r.status); d = await r.json(); }
   catch (e) { if (first) $("#banners").innerHTML = `<div class="banner bad">Could not load ${DATA_URL} (${e.message}). The first pipeline run creates it.</div>`; return; }
