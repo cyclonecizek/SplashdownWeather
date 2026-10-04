@@ -21,6 +21,14 @@ constraints:
   precip_in: 0.01              # global ensembles: 1 h precip >= this at the site or 10 nm ring
   ltng_threshold: 0.05         # hi-res lightning field (flashes/km2/5 min) above this
   ceiling_ft: 500              # ceiling below this at the site
+  # Dew point depression (situational awareness only, not a constraint): highlighted when
+  # the ensemble median is within these values (C).
+  dd_caution_c: 3
+  dd_warning_c: 1
+  # Global-ensemble ceiling stand-in (used only where no direct ceiling guidance exists):
+  # cloud base ~ lcl_m_per_c metres per C of dew point depression, plus low cloud cover.
+  lcl_m_per_c: 125
+  standin_low_cloud_pct: 70
   vis_sm: 1                    # visibility below this at the site
 
 min_window_coverage: 0.5
@@ -103,6 +111,30 @@ sources:
     runs: 2
     stations: *mos_stations
 
+  # Ensemble aviation probabilities (ceiling and visibility below the thresholds nearest the
+  # limits). REFS replaces HREF when RRFS goes operational; the first base with data wins.
+  - id: refs_avn
+    kind: ensprob
+    label: REFS ceiling/vis probabilities
+    family: hires
+    weight: 3
+    bases:
+      - https://nomads.ncep.noaa.gov/pub/data/nccf/com/refs/prod
+      - https://nomads.ncep.noaa.gov/pub/data/nccf/com/refs/v1.0
+      - https://nomads.ncep.noaa.gov/pub/data/nccf/com/refs/para
+    file: "refs.{ymd}/{hh}/ensprod/refs.t{hh}z.prob.f{fh:02d}.conus.grib2"
+    max_fh: 60
+
+  - id: href_avn
+    kind: ensprob
+    label: HREF ceiling/vis probabilities
+    family: hires
+    weight: 3
+    bases:
+      - https://nomads.ncep.noaa.gov/pub/data/nccf/com/href/prod
+    file: "href.{ymd}/ensprod/href.t{hh}z.conus.prob.f{fh:02d}.grib2"
+    max_fh: 48
+
   # NBM's own wind distribution (quantile-mapped percentiles). Not a member: the page uses
   # its mean and 99th percentile directly when NBM is the only wind source switched on.
   - id: nbm_qmd
@@ -118,7 +150,7 @@ sources:
     percentile: 99
 
   # NBM deterministic wind (feeds the wind statistics as one member).
-  - {id: nbm,       kind: openmeteo_det, label: NBM wind,        family: blend,  weight: 2, model: ncep_nbm_conus, only: [w]}
+  - {id: nbm,       kind: openmeteo_det, label: NBM wind,        family: blend,  weight: 2, model: ncep_nbm_conus, only: [w, d]}   # no ceiling stand-in: NBM has direct ceiling probabilities
   - {id: ecmwf_ens, kind: openmeteo_ens, label: ECMWF ENS,       family: global, weight: 2, model: ecmwf_ifs025}
   - {id: aifs_ens,  kind: openmeteo_ens, label: ECMWF AIFS ENS,  family: global, weight: 1, model: ecmwf_aifs025}
   - {id: gefs,      kind: openmeteo_ens, label: GEFS,            family: global, weight: 1, model: gfs025}
