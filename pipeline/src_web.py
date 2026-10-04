@@ -15,6 +15,10 @@ import re
 import time
 
 from .common import SESSION, Context, SourceResult, log
+from .marine import score as ml_score
+
+PLEVS = (1000, 975, 950, 925, 850)
+STD_HEIGHT_M = {1000: 110, 975: 330, 950: 560, 925: 780, 850: 1460}   # used if geopotential is absent
 
 ENS_URL = "https://ensemble-api.open-meteo.com/v1/ensemble"
 DET_URL = "https://api.open-meteo.com/v1/forecast"
@@ -98,8 +102,48 @@ def _members(locs, pts, ctx, only):
     return out
 
 
+def _profiles(url, model, ctx):
+    """Marine layer records {mid: {t: {mlb@, mls@, ml@}}} from pressure-level temperatures at
+    each site (Open-Meteo returns whichever levels the model has)."""
+    pts = [(s["id"], s["lat"], s["lon"]) for s in ctx.sites]
+    variables = ["temperature_2m", "dew_point_2m", "relative_humidity_1000hPa"]
+    for p in PLEVS:
+        variables += [f"temperature_{p}hPa", f"geopotential_height_{p}hPa"]
+    locs = _fetch(url, model, ctx, pts, variables)
+    key = re.compile(r"^(temperature_2m|dew_point_2m|relative_humidity_1000hPa|temperature_(\d+)hPa|geopotential_height_(\d+)hPa)(?:_member(\d+))?$")
+    out = {}
+    for (sid, _, _), loc in zip(pts, locs):
+        h = loc["hourly"]
+        per = {}
+        for k, arr in h.items():
+            m = key.match(k)
+            if m:
+                mid = f"m{int(m.group(4)):02d}" if m.group(4) else "m00"
+                per.setdefault(mid, {})[m.group(1)] = arr
+        for mid, f in per.items():
+            for i, t in enumerate(h["time"]):
+                if not ctx.in_window(t):
+                    continue
+                at = lambda name: (f.get(name) or [None] * (i + 1))[i]
+                t2, td2 = at("temperature_2m"), at("dew_point_2m")
+                levels = [(2.0, t2)] if t2 is not None else []
+                for p in PLEVS:
+                    tp = at(f"temperature_{p}hPa")
+                    if tp is None:
+                        continue
+                    z = at(f"geopotential_height_{p}hPa")
+                    z = z if z is not None else STD_HEIGHT_M[p]
+                    if z > 10:
+                        levels.append((float(z), tp))
+                rec = ml_score(levels, ctx.cons, dd2m=(t2 - td2) if None not in (t2, td2) else None,
+                               rh_low=at("relative_humidity_1000hPa"))
+                if rec:
+                    out.setdefault(mid, {}).setdefault(int(t), {}).update({f"{k}@{sid}": v for k, v in rec.items()})
+    return out
+
+
 def _source(scfg, ctx, url):
-    only = set(scfg.get("only", ["w", "p", "d", "cs"]))
+    only = set(scfg.get("only", ["w", "p", "d", "cs", "ml"]))
     variables = [v for k, v in (("w", "wind_speed_10m"), ("p", "precipitation")) if k in only]
     if "d" in only:
         variables += ["temperature_2m", "dew_point_2m"]
@@ -117,6 +161,13 @@ def _source(scfg, ctx, url):
         pass
     pts = _points(ctx) if "p" in only else [(s["id"], s["lat"], s["lon"]) for s in ctx.sites]
     mem = _members(_fetch(url, scfg["model"], ctx, pts, variables), pts, ctx, only)
+    if "ml" in only:
+        try:
+            for mid, series in _profiles(url, scfg["model"], ctx).items():
+                for t, rec in series.items():
+                    mem.setdefault(mid, {}).setdefault(t, {}).update(rec)
+        except Exception as e:
+            log.warning("%s: marine layer profiles failed: %s", scfg["id"], e)
     if mem:
         with open(path, "w") as f:
             json.dump({"fetched": ctx.now, "members": mem}, f, separators=(",", ":"))

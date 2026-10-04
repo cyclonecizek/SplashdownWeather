@@ -380,3 +380,81 @@ def ensprob(scfg, ctx):
         ("; parallel feed" if base.endswith("/para") else "")
     return SourceResult({"m00": series} if series else {}, cycle=iso(cycle), note=note,
                         status="ok" if series else "missing")
+
+
+
+# ---------------------------------------------------------------- HRRR marine layer profiles
+_PLEV_HRRR = (1000, 975, 950, 925, 900, 875, 850)
+
+
+def hrrr_profile(scfg, ctx):
+    """Marine layer diagnostics from HRRR pressure levels (1000-850 mb, every 25 mb) at each
+    site, from the HRRR pressure-level files on AWS. Time-lagged like the HRRR source; newest
+    cycles first, and downloading stops after budget_min minutes (cached work carries over)."""
+    from .marine import score as ml_score
+    fields = {}
+    for p in _PLEV_HRRR:
+        fields[f"t{p}"] = rf":TMP:{p} mb:"
+        fields[f"h{p}"] = rf":HGT:{p} mb:"
+    fields.update({"t2": r":TMP:2 m above ground:", "td2": r":DPT:2 m above ground:", "rh1000": r":RH:1000 mb:"})
+    deadline = time.time() + 60 * float(scfg.get("budget_min", 12))
+    recent = [floor_hour(ctx.now) - k * 3600 for k in range(10)]
+    picked = _pick([scfg["base"]], scfg["file"], recent)
+    if not picked:
+        return SourceResult({}, status="missing", note="no recent cycle found")
+    base, latest = picked
+    cycles = [latest - k * 3600 for k in range(int(scfg.get("lag_cycles", 4)))]
+    cycles += [c for c in (latest - k * 3600 for k in range(30))
+               if time.gmtime(c).tm_hour % 6 == 0 and c not in cycles][: int(scfg.get("synoptic_extra", 2))]
+    tasks = []
+    for c in cycles:
+        mx = 48 if time.gmtime(c).tm_hour % 6 == 0 else 18
+        for fh in range(0, mx + 1):
+            if ctx.in_window(c + fh * 3600):
+                tasks.append((time.strftime("%d/%HZ", time.gmtime(c)), f"{base}/{_fmt(scfg['file'], c, fh)}", c, c + fh * 3600))
+    tasks.sort(key=lambda t: (-t[2], t[3]))
+    skipped = [0]
+
+    def select(inv):
+        from .grib import match_fields
+        return [(n, rec, "point") for n, rec in match_fields(inv, fields).items()]
+
+    def run(task):
+        mid, url, c, valid = task
+        got = ctx.cache.get(url + "#prof")
+        if got is None:
+            if time.time() > deadline:
+                skipped[0] += 1
+                return task, None
+            try:
+                vals = fetch_select(url, select, ctx.sites, float(ctx.cons["radius_nm"]))
+            except Missing:
+                return task, None
+            except Exception as e:
+                log.warning("%s %s: %s", scfg["id"], url.rsplit("/", 1)[-1], e)
+                return task, None
+            got = {k: d for k, d in vals.items() if isinstance(d, dict)}
+            ctx.cache.put(url + "#prof", c, got)
+        rec = {}
+        for site in ctx.sites:
+            sid = site["id"]
+            g = lambda k: (got.get(k) or {}).get(sid)
+            levels = [(2.0, g("t2") - 273.15)] if g("t2") is not None else []
+            for p in _PLEV_HRRR:
+                if g(f"t{p}") is not None and g(f"h{p}") is not None and g(f"h{p}") > 10:
+                    levels.append((g(f"h{p}"), g(f"t{p}") - 273.15))
+            dd = (g("t2") - g("td2")) if g("t2") is not None and g("td2") is not None else None
+            frag = ml_score(levels, ctx.cons, dd2m=dd, rh_low=g("rh1000"))
+            rec.update({f"{k}@{sid}": v for k, v in frag.items()})
+        return task, (rec or None)
+
+    members = {}
+    with ThreadPoolExecutor(16) as ex:
+        for (mid, _, _, valid), rec in ex.map(run, tasks):
+            if rec:
+                members.setdefault(mid, {})[valid] = rec
+    note = f"{len(members)}/{len(cycles)} cycles, 1000-850 mb"
+    if skipped[0]:
+        note += f"; {skipped[0]} files left for the next run (time budget)"
+    return SourceResult(members, cycle=iso(latest), note=note,
+                        status=("partial" if skipped[0] or len(members) < len(cycles) else "ok") if members else "missing")
