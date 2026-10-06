@@ -135,7 +135,7 @@ td.si { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.35
 table.g td.rowh .tag { display: inline-block; font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--rule); border-radius: 8px; padding: 0 5px; margin-left: 4px; vertical-align: 1px; }
 table.g tr.overall td { border-top: 2px solid var(--ink); }
 table.g tr.overall td.p { font-size: 15px; }
-table.g th.hr { font-weight: 500; color: var(--muted); font-size: 12px; min-width: 38px; }
+table.g th.hr { font-weight: 500; color: var(--muted); font-size: 12px; min-width: 50px; white-space: nowrap; }
 table.g th.day.past, table.g th.hr.past { opacity: .45; }
 .seg.pad { margin: 0; }
 
@@ -501,7 +501,7 @@ function grid() {
     const c = cols[i], wd = new Date(Date.UTC(c.y, c.mo - 1, c.dd)).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
     h += `<th colspan="${per}" class="day${cols[i + per - 1].b <= now ? " past" : ""}">${wd}<small>${c.mo}/${c.dd}</small></th>`;
   }
-  h += "</tr><tr><th></th>" + cols.map(c => `<th class="hr${c.b <= now ? " past" : ""}">${String(c.h).padStart(2, "0")}${tzSuffix()}</th>`).join("") + "</tr></thead><tbody>";
+  h += "</tr><tr><th></th>" + cols.map(c => `<th class="hr${c.b <= now ? " past" : ""}">${String(c.h).padStart(2, "0")}–${String((c.h + wh) % 24).padStart(2, "0")}${tzSuffix()}</th>`).join("") + "</tr></thead><tbody>";
   const pc = c => c.b <= now ? " past" : "";
   // Two wind rows, each colored against its own limits (Super GO / GO / NO-GO).
   const C = state.data.constraints;
