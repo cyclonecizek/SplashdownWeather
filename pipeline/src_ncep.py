@@ -322,7 +322,12 @@ def ensprob(scfg, ctx):
     want = {"c": c["ceiling_ft"] * FT_M, "v": c["vis_sm"] * SM_M}
     cands = [x for x in (floor_hour(ctx.now) - k * 3600 for k in range(36))
              if time.gmtime(x).tm_hour in set(scfg.get("cycles", [0, 6, 12, 18]))]
-    picked = _pick(scfg["bases"], scfg["file"], cands)
+    picked = None
+    for tmpl in ([scfg["file"]] if "file" in scfg else scfg["files"]):    # first naming that exists wins
+        picked = _pick(scfg["bases"], tmpl, cands)
+        if picked:
+            scfg = dict(scfg, file=tmpl)
+            break
     if not picked:
         return SourceResult({}, status="missing", note="no recent cycle found")
     base, cycle = picked
@@ -371,6 +376,8 @@ def ensprob(scfg, ctx):
             rec = {}
             for name, bysite in got.items():
                 key = name[0]
+                if all(v is None for v in bysite.values()):
+                    continue                     # grid has no value at the sites (e.g. masked offshore)
                 thr.add(("ceiling" if key == "c" else "visibility") + f" < {name[2:]} m")
                 for sid, v in bysite.items():
                     if v is not None:

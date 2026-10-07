@@ -68,8 +68,9 @@ def probe_one(s, cfg, now, syn):
                                            or ":TMP:2 m above" in r[3] or ":DPT:2 m above" in r[3] or ":RH:1000 mb:" in r[3]) or "       -- no profile records"))
     elif s["kind"] == "ensprob":
         for b in s["bases"]:
-            print(f"  {b}")
-            probe(b, s["file"], syn(s.get("cycles", [0, 6, 12, 18])),
+          for tmpl in ([s["file"]] if "file" in s else s["files"]):
+            print(f"  {b}/{tmpl}")
+            probe(b, tmpl, syn(s.get("cycles", [0, 6, 12, 18])),
                   lambda inv: print("\n".join(f"       {r[3]}" for r in inv if ("CEIL" in r[3] or "cloud ceiling" in r[3] or ":VIS:" in r[3]))[:3000] or "       -- no ceiling/visibility records"))
     elif s["kind"] == "nbm_qmd":
         probe(s["base"], s["file"], syn(s.get("cycles", [0, 6, 12, 18])),
