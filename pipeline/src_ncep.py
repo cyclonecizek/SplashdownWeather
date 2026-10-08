@@ -264,7 +264,9 @@ def nbm_qmd(scfg, ctx):
                 continue
             m = _PCT.search(d)
             if m:
-                pcts.append((float(m.group(1) or m.group(2)), rec))
+                p = float(m.group(1) or m.group(2))
+                if 0 < p < 100:                  # 100 is the distribution maximum, not a percentile we want
+                    pcts.append((p, rec))
             elif not re.search(r"std|prob|max|min|ave", d, re.I) and mean is None:
                 mean = rec
         out = [("wm", mean, "point")] if mean else []
@@ -344,9 +346,13 @@ def ensprob(scfg, ctx):
             if key:
                 opts[key].append((float(th.group(2)), rec))
         out = []
+        tol = float(scfg.get("max_threshold_ratio", 1.15))
         for key, o in opts.items():
             if o:
                 thr, rec = min(o, key=lambda x: abs(math.log(max(x[0], 1) / want[key])))
+                if max(thr, want[key]) / max(min(thr, want[key]), 1e-6) > tol:
+                    used[key] = f"none near the limit (closest {thr:g} m)"
+                    continue                     # e.g. HREF's < 305 m ceiling must not stand in for < 152 m
                 used[key] = thr
                 out.append((f"{key}<{thr:g}", rec, "point"))
         return out
@@ -384,7 +390,8 @@ def ensprob(scfg, ctx):
                         rec[f"{key}@{sid}"] = round(min(1.0, max(0.0, v / 100.0)), 3)
             if rec:
                 series[cycle + fh * 3600] = rec
-    note = ("; ".join(sorted(thr)) or "no ceiling/visibility probabilities in the files") + \
+    skipped = [f"{'ceiling' if k == 'c' else 'visibility'}: {v}" for k, v in used.items() if isinstance(v, str)]
+    note = ("; ".join(sorted(thr) + skipped) or "no ceiling/visibility probabilities in the files") + \
         ("; parallel feed" if base.endswith("/para") else "")
     return SourceResult({"m00": series} if series else {}, cycle=iso(cycle), note=note,
                         status="ok" if series else "missing")
@@ -466,3 +473,117 @@ def hrrr_profile(scfg, ctx):
         note += f"; {skipped[0]} files left for the next run (time budget)"
     return SourceResult(members, cycle=iso(latest), note=note,
                         status=("partial" if skipped[0] or len(members) < len(cycles) else "ok") if members else "missing")
+
+
+# ---------------------------------------------------------------- Gridded LAMP
+_GLMP_FILE = re.compile(r'href="(glmp\.t(\d{2})(\d{2})z\.(hourly|master)\.f(\d{3})(?:\.co)?\.grib2)"')
+_DATEDIR = re.compile(r'href="(glmp\.(\d{8})/)"')
+
+
+def _listing(url):
+    from .grib import _get
+    r = _get(url, timeout=30)
+    return r.text if r.status_code == 200 else ""
+
+
+def glmp(scfg, ctx):
+    """Gridded LAMP probabilities of ceiling < ceiling_ft and visibility < vis_sm at each site.
+    File names are found from the NOMADS directory listing; files with an .idx are read by
+    byte range, files without one are downloaded whole and read from their GRIB metadata."""
+    from .grib import _get, decode_whole
+    c = ctx.cons
+    want = {"c": c["ceiling_ft"] * FT_M, "v": c["vis_sm"] * SM_M}
+    tol = float(scfg.get("max_threshold_ratio", 1.15))
+    base = scfg["base"].rstrip("/")
+    dates = sorted({m.group(2) for m in _DATEDIR.finditer(_listing(base + "/"))}, reverse=True)[:2]
+    if not dates:
+        return SourceResult({}, status="missing", note=f"no glmp.YYYYMMDD folders listed under {base}")
+    files, idx = {}, set()
+    for d in dates:
+        page = _listing(f"{base}/glmp.{d}/")
+        for m in _GLMP_FILE.finditer(page):
+            name, hh, mm, kind, fh = m.group(1), int(m.group(2)), int(m.group(3)), m.group(4), int(m.group(5))
+            cyc = int(time.mktime(time.strptime(d, "%Y%m%d")) - time.timezone) + hh * 3600
+            files.setdefault((cyc, kind), {})[fh] = f"{base}/glmp.{d}/{name}"
+        idx |= {f"{base}/glmp.{d}/{n}" for n in re.findall(r'href="([^"]+\.grib2)\.idx"', page)}
+    if not files:
+        return SourceResult({}, status="missing", note=f"no glmp.*.grib2 files listed in {', '.join(dates)}")
+    # newest cycle with most of its hours posted; hourly files preferred over master
+    every = int(scfg.get("every_hours", 3))
+    cands = sorted(((cyc, kind) for (cyc, kind), f in files.items()
+                    if len(f) >= int(scfg.get("min_files", 20)) and time.gmtime(cyc).tm_hour % every == 0),
+                   key=lambda k: (k[0], k[1] == "hourly"), reverse=True)
+    if not cands:
+        return SourceResult({}, status="missing", note="no complete recent cycle listed yet")
+    cycle, kind = cands[0]
+    fhs = {fh: u for fh, u in files[(cycle, kind)].items() if 1 <= fh <= int(scfg.get("max_fh", 38)) and ctx.in_window(cycle + fh * 3600)}
+
+    def pick(recs):
+        """{key: {site: prob}} for the probability records nearest the limits."""
+        out = {}
+        for key, (cat, num) in (("c", (6, 13)), ("v", (19, 0))):
+            opts = []
+            for r in recs:
+                if r["disc"] != 0 or r["cat"] != cat or r["num"] != num or r["ptype"] is None:
+                    continue
+                thr = r["lower"] if r["ptype"] == 0 else r["upper"] if r["ptype"] == 4 else None
+                if thr:
+                    opts.append((thr, r))
+            if opts:
+                thr, r = min(opts, key=lambda o: abs(math.log(o[0] / want[key])))
+                if max(thr, want[key]) / min(thr, want[key]) <= tol:
+                    out[key] = (thr, r["vals"])
+        return out
+
+    def run(item):
+        fh, url = item
+        got = ctx.cache.get(url + "#glmp")
+        if got is None:
+            try:
+                if url in idx:
+                    def select(inv):
+                        o = {"c": [], "v": []}
+                        for rec in inv:
+                            th = _THR.search(rec[3])
+                            k = "c" if _CEILREC.search(rec[3]) else "v" if _VISREC.search(rec[3]) else None
+                            if th and k and th.group(1) == "<":
+                                o[k].append((float(th.group(2)), rec))
+                        res = []
+                        for k, opts in o.items():
+                            if opts:
+                                thr, rec = min(opts, key=lambda x: abs(math.log(max(x[0], 1) / want[k])))
+                                if max(thr, want[k]) / min(thr, want[k]) <= tol:
+                                    res.append((f"{k}<{thr:g}", rec, "point"))
+                        return res
+                    vals = fetch_select(url, select, ctx.sites, float(c["radius_nm"]))
+                    got = {n: d for n, d in vals.items() if isinstance(d, dict)}
+                else:
+                    r = _get(url, timeout=120)
+                    if r.status_code != 200:
+                        return None
+                    got = {f"{k}<{thr:g}": v for k, (thr, v) in pick(decode_whole(r.content, ctx.sites)).items()}
+            except Exception as e:
+                log.warning("%s f%03d: %s", scfg["id"], fh, e)
+                return None
+            ctx.cache.put(url + "#glmp", cycle, got)
+        return fh, got
+
+    series, thr = {}, set()
+    with ThreadPoolExecutor(4) as ex:
+        for res in ex.map(run, sorted(fhs.items())):
+            if not res:
+                continue
+            fh, got = res
+            rec = {}
+            for name, bysite in got.items():
+                thr.add(("ceiling" if name[0] == "c" else "visibility") + f" < {name[2:]} m")
+                for sid, v in bysite.items():
+                    if v is not None:
+                        rec[f"{name[0]}@{sid}"] = round(min(1.0, max(0.0, v / 100.0)), 3)
+            if rec:
+                series[cycle + fh * 3600] = rec
+    sites_with = sorted({k.split("@")[1] for r in series.values() for k in r})
+    note = f"{time.strftime('%HZ', time.gmtime(cycle))} {kind} files; " + ("; ".join(sorted(thr)) or "no matching probabilities") + \
+        (f"; sites with values: {', '.join(sites_with)}" if series else "")
+    return SourceResult({"m00": series} if series else {}, cycle=iso(cycle), note=note,
+                        status="ok" if series else "missing")

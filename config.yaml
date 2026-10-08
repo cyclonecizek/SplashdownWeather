@@ -159,16 +159,13 @@ sources:
   # Gridded LAMP: hourly probabilities of ceiling < 152.4 m (500 ft) and visibility < 1609 m
   # (1 mi) at each site, every hour out to 38 h (cycles at HH30).
   - id: glmp
-    kind: ensprob
+    kind: glmp
     label: Gridded LAMP probabilities
     family: mos
     weight: 2
-    cycles: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
-    bases:
-      - https://nomads.ncep.noaa.gov/pub/data/nccf/com/glmp/prod
-    files:
-      - "glmp.{ymd}/glmp.t{hh}30z.hourly.f{fh:03d}.co.grib2"
-      - "glmp.{ymd}/glmp.t{hh}30z.master.f{fh:03d}.co.grib2"
+    base: https://nomads.ncep.noaa.gov/pub/data/nccf/com/glmp/prod
+    every_hours: 3          # LAMP runs hourly; take every 3rd cycle to limit downloads
+    min_files: 20           # a cycle counts once most of its forecast hours are posted
     max_fh: 38
 
   # NBM's own wind distribution (quantile-mapped percentiles). Not a member: the page uses

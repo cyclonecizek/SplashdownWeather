@@ -37,11 +37,32 @@ def _points(ctx):
     return pts
 
 
+_LAST_CALL = [0.0]
+OM_GAP_S = 15          # spacing between Open-Meteo calls; the free API throttles bursts
+
+
+def _om_get(url, params):
+    """GET with spacing between calls and patient back-off on 429 (rate limited)."""
+    import requests
+    for attempt in range(4):
+        wait = _LAST_CALL[0] + OM_GAP_S - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        r = requests.get(url, params=params, timeout=180, headers={"User-Agent": SESSION.headers.get("User-Agent", "")})
+        _LAST_CALL[0] = time.time()
+        if r.status_code != 429:
+            return r
+        delay = float(r.headers.get("Retry-After", 0) or 0) or 60 * (attempt + 1)
+        log.info("Open-Meteo rate limit; waiting %.0f s", delay)
+        time.sleep(min(delay, 180))
+    return r
+
+
 def _fetch(url, model, ctx, pts, variables):
     days = max(1, math.ceil((ctx.t_end - ctx.now) / 86400) + 1)
     variables = list(variables)
     for _ in range(len(variables)):
-        r = SESSION.get(url, timeout=180, params={
+        r = _om_get(url, params={
             "latitude": ",".join(str(p[1]) for p in pts), "longitude": ",".join(str(p[2]) for p in pts),
             "models": model, "hourly": ",".join(variables), "wind_speed_unit": "kn", "precipitation_unit": "inch",
             "timeformat": "unixtime", "timezone": "GMT", "past_days": 1, "forecast_days": min(days, 16)})
@@ -150,17 +171,31 @@ def _source(scfg, ctx, url):
     if "cs" in only:
         variables += ["cloud_cover_low"]
     path = os.path.join(ctx.root, "cache", f"om_{scfg['id']}.json")
+    old = None
     try:
         with open(path) as f:
             old = json.load(f)
-        if ctx.now - old["fetched"] < ctx.om_refresh_h * 3600:
-            mem = {m: {int(t): r for t, r in s.items() if ctx.in_window(int(t))} for m, s in old["members"].items()}
-            return SourceResult(mem, cycle=time.strftime("%H:%MZ", time.gmtime(old["fetched"])) + " (cached)",
-                                note=f"{len(mem)} members via Open-Meteo", status="ok" if mem else "missing")
-    except (OSError, ValueError, KeyError):
-        pass
+    except (OSError, ValueError):
+        old = None
+
+    def from_cache(label):
+        mem = {m: {int(t): r for t, r in s.items() if ctx.in_window(int(t))} for m, s in old["members"].items()}
+        return SourceResult(mem, cycle=time.strftime("%H:%MZ", time.gmtime(old["fetched"])) + f" ({label})",
+                            note=f"{len(mem)} members via Open-Meteo", status="ok" if mem else "missing")
+
+    if old and ctx.now - old.get("fetched", 0) < ctx.om_refresh_h * 3600:
+        return from_cache("cached")
     pts = _points(ctx) if "p" in only else [(s["id"], s["lat"], s["lon"]) for s in ctx.sites]
-    mem = _members(_fetch(url, scfg["model"], ctx, pts, variables), pts, ctx, only)
+    try:
+        mem = _members(_fetch(url, scfg["model"], ctx, pts, variables), pts, ctx, only)
+    except Exception as e:
+        # Throttled or down: keep using the last pull for up to 12 hours rather than dropping the model.
+        if old and ctx.now - old.get("fetched", 0) < 12 * 3600:
+            log.warning("%s: fetch failed (%s); using the previous pull", scfg["id"], str(e)[:80])
+            res = from_cache("previous pull, refresh failed")
+            res.status = "partial" if res.members else "missing"
+            return res
+        raise
     if "ml" in only:
         try:
             for mid, series in _profiles(url, scfg["model"], ctx).items():

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 
 import yaml
@@ -66,6 +67,17 @@ def probe_one(s, cfg, now, syn):
         probe(s["base"], s["file"], [floor_hour(now) - k * 3600 for k in range(10)],
               lambda inv: print("\n".join(f"       {r[3]}" for r in inv if any(f":{v}:{p} mb:" in r[3] for v in ("TMP", "HGT") for p in (1000, 975, 950, 925, 900, 875, 850))
                                            or ":TMP:2 m above" in r[3] or ":DPT:2 m above" in r[3] or ":RH:1000 mb:" in r[3]) or "       -- no profile records"))
+    elif s["kind"] == "glmp":
+        from .src_ncep import _listing, _DATEDIR, _GLMP_FILE
+        top = _listing(s["base"].rstrip("/") + "/")
+        dates = sorted({m.group(2) for m in _DATEDIR.finditer(top)}, reverse=True)[:1]
+        print(f"    date folders: {dates or 'none found'}")
+        if dates:
+            page = _listing(f"{s['base'].rstrip('/')}/glmp.{dates[0]}/")
+            names = [m.group(1) for m in _GLMP_FILE.finditer(page)]
+            print(f"    {len(names)} forecast files, e.g. {names[:3]}; .idx files present: {'.idx' in page}")
+            if not names:
+                print("    first entries in the folder: " + ", ".join(re.findall(r'href="([^"]+)"', page)[5:15]))
     elif s["kind"] == "ensprob":
         for b in s["bases"]:
           for tmpl in ([s["file"]] if "file" in s else s["files"]):

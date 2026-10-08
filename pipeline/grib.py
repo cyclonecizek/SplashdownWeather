@@ -321,3 +321,45 @@ def earth_relative(u, v, meta, lon):
     a = math.sin(math.radians(meta["latin1"])) * math.radians(lon - lov)
     c, s = math.cos(a), math.sin(a)
     return c * u + s * v, -s * u + c * v
+
+
+# ---------------------------------------------------------------- whole-file reading (no .idx)
+def _key(gid, k):
+    try:
+        return eccodes.codes_get(gid, k)
+    except Exception:
+        return None
+
+
+def decode_whole(blob: bytes, sites: list) -> list[dict]:
+    """Every message in a GRIB2 file as {"disc", "cat", "num", "ptype", "lower", "upper",
+    "vals": {site_id: value}}, for files published without an .idx inventory."""
+    if eccodes is None:
+        raise RuntimeError("eccodes not installed")
+    out = []
+    fd, path = tempfile.mkstemp(suffix=".grib2")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(blob)
+        with open(path, "rb") as f:
+            while True:
+                gid = eccodes.codes_grib_new_from_file(f)
+                if gid is None:
+                    break
+                try:
+                    rec = {"disc": _key(gid, "discipline"), "cat": _key(gid, "parameterCategory"),
+                           "num": _key(gid, "parameterNumber"), "ptype": _key(gid, "probabilityType")}
+                    for side in ("Lower", "Upper"):
+                        sv, sf = _key(gid, f"scaledValueOf{side}Limit"), _key(gid, f"scaleFactorOf{side}Limit")
+                        rec[side.lower()] = None if sv is None or sf is None or abs(sv) > 1e9 else sv * 10.0 ** (-sf)
+                    miss = _key(gid, "missingValue")
+                    rec["vals"] = {}
+                    for x in sites:
+                        v = _nearest(gid, x["lat"], x["lon"])
+                        rec["vals"][x["id"]] = None if (miss is not None and abs(v - miss) < 1e-6) or abs(v) > 1e10 else v
+                    out.append(rec)
+                finally:
+                    eccodes.codes_release(gid)
+    finally:
+        os.unlink(path)
+    return out
